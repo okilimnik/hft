@@ -1,0 +1,9 @@
+[package]
+name = "trade_rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-cron-scheduler = "0.9.4"
+binance = { git = "https://github.com/okilimnik/binance-rs.git", rev = "10c72c6" }
