@@ -1,8 +1,6 @@
 use binance::api::*;
 use binance::market::*;
-use binance::model::OrderBook;
-use binance::model::WindowTickerEvent;
-use binance::model::DepthOrderBookEvent;
+use binance::model::{DepthOrderBookEvent, OrderBook, WindowTickerEvent};
 use binance::websockets::*;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
@@ -36,9 +34,11 @@ fn to_file(filename: &str, data: String, append: bool) -> Result<(), Error> {
 fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, market: &Market) {
     println!("order_book.last_update_id = {}", order_book.last_update_id);
     if order_book.last_update_id == 0 {
-        order_book.clone_from(&market
-            .get_custom_depth(SYMBOL, 5000)
-            .expect("Failed to get initial order book."));
+        order_book.clone_from(
+            &market
+                .get_custom_depth(SYMBOL, 5000)
+                .expect("Failed to get initial order book."),
+        );
     } else {
         if event.final_update_id > order_book.last_update_id {
             order_book.last_update_id = event.final_update_id;
@@ -89,19 +89,23 @@ fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, m
     );
 }
 
-fn notify_on_big_moves(events: Vec<WindowTickerEvent>, mut symbols: HashSet<String>) {
+fn notify_on_big_moves(events: Vec<WindowTickerEvent>) {
+    let mut symbols: HashSet<String> = vec![].into_iter().collect();
     for event in events {
-        let change: f32 = event.price_change_percent.parse().expect("Cannot parse price_change_percent");
+        let change: f32 = event
+            .price_change_percent
+            .parse()
+            .expect("Cannot parse price_change_percent");
         let symbol = event.symbol;
         if change >= 5.0 && !symbols.contains(&symbol) && symbol.ends_with("USDT") {
             symbols.insert(symbol.clone());
             play_sound();
-            to_file("alerts.txt", format!("{} - {}", symbol, change), true);
+            let _ = to_file("alerts.txt", format!("{} - {}", symbol, change), true);
         }
         if change >= 5.0 && !symbols.contains(&symbol) && symbol.ends_with("USDT") {
             symbols.insert(symbol.clone());
             play_sound();
-            to_file("alerts.txt", format!("{} - {}", symbol, change), true);
+            let _ = to_file("alerts.txt", format!("{} - {}", symbol, change), true);
         }
     }
 }
@@ -113,8 +117,7 @@ pub fn subscribe() {
         format!("{}@depth@100ms", SYMBOL.to_lowercase()),
         format!("{}@aggTrade", SYMBOL.to_lowercase()),
     ];
-    //let mut symbols: HashSet<String> = vec![].into_iter().collect();
-    let market:Market = Binance::new(None, None);
+    let market: Market = Binance::new(None, None);
     let mut order_book = OrderBook {
         last_update_id: 0,
         bids: vec![],
@@ -123,8 +126,8 @@ pub fn subscribe() {
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         match event {
             WebsocketEvent::WindowTickerAll(events) => {
-                //notify_on_big_moves(events, symbols);
-            },
+                //notify_on_big_moves(events);
+            }
             WebsocketEvent::DepthOrderBook(event) => {
                 maintain_order_book(event, &mut order_book, &market);
             }

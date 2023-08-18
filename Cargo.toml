@@ -8,7 +8,6 @@ tokio = { version = "1", features = ["full"] }
 tokio-cron-scheduler = "0.9.4"
 binance = { git = "https://github.com/okilimnik/binance-rs.git", rev = "10c72c6" }
 teloxide = { version = "0.12", features = ["macros"] }
-log = "0.4"
-pretty_env_logger = "0.4"
 serde_json = "1.0.105"
 serde = "1.0.183"
+average = "0.14.1"
