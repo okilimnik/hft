@@ -5,11 +5,20 @@ use binance::websockets::*;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::io::Error;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
+use serde::{Deserialize, Serialize};
+use crate::stats;
 
 const SYMBOL: &'static str = "BTCTUSD";
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OrderBookStats {
+    variance: Vec<f64>,
+    mean: Vec<f64>,
+    quantile: Vec<f64>
+}
 
 fn play_sound() {
     Command::new("afplay")
@@ -18,7 +27,7 @@ fn play_sound() {
         .expect("Couldn't play sound");
 }
 
-fn to_file(filename: &str, data: String, append: bool) -> Result<(), Error> {
+fn to_file(filename: &str, data: String, append: bool) {
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -27,8 +36,7 @@ fn to_file(filename: &str, data: String, append: bool) -> Result<(), Error> {
         .expect(&format!("Unable to write {}", filename));
     if let Err(e) = writeln!(file, "{}", data) {
         eprintln!("Couldn't write to file: {}", e);
-    }
-    Ok(())
+    };
 }
 
 fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, market: &Market) {
@@ -82,7 +90,7 @@ fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, m
             }
         }
     }
-    let _ = to_file(
+    to_file(
         "order_book.json",
         serde_json::to_string(order_book).expect("Failed to stringify order book."),
         false,
@@ -100,14 +108,22 @@ fn notify_on_big_moves(events: Vec<WindowTickerEvent>) {
         if change >= 5.0 && !symbols.contains(&symbol) && symbol.ends_with("USDT") {
             symbols.insert(symbol.clone());
             play_sound();
-            let _ = to_file("alerts.txt", format!("{} - {}", symbol, change), true);
+            to_file("alerts.txt", format!("{} - {}", symbol, change), true);
         }
         if change >= 5.0 && !symbols.contains(&symbol) && symbol.ends_with("USDT") {
             symbols.insert(symbol.clone());
             play_sound();
-            let _ = to_file("alerts.txt", format!("{} - {}", symbol, change), true);
+            to_file("alerts.txt", format!("{} - {}", symbol, change), true);
         }
     }
+}
+
+fn maintain_order_book_stats(order_book: &OrderBook, order_book_stats: &mut OrderBookStats) {
+    let order_book_snapshot_stats = stats::extract_order_book_snapshot_stats(&order_book);
+    order_book_stats.variance.push(order_book_snapshot_stats.variance);
+    order_book_stats.mean.push(order_book_snapshot_stats.mean);
+    order_book_stats.quantile.push(order_book_snapshot_stats.quantile);
+    to_file("order_book_stats.json", serde_json::to_string(order_book_stats).unwrap(), false);
 }
 
 pub fn subscribe() {
@@ -123,6 +139,11 @@ pub fn subscribe() {
         bids: vec![],
         asks: vec![],
     };
+    let mut order_book_stats = OrderBookStats {
+        variance: vec![],
+        mean: vec![],
+        quantile: vec![]
+    };
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         match event {
             WebsocketEvent::WindowTickerAll(events) => {
@@ -130,6 +151,7 @@ pub fn subscribe() {
             }
             WebsocketEvent::DepthOrderBook(event) => {
                 maintain_order_book(event, &mut order_book, &market);
+                maintain_order_book_stats(&order_book, &mut order_book_stats);
             }
             WebsocketEvent::AggrTrades(event) => {}
             _ => (),
