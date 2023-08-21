@@ -1,5 +1,6 @@
 use binance::api::*;
 use binance::market::*;
+use binance::model::Kline;
 use binance::model::{DepthOrderBookEvent, OrderBook};
 use binance::websockets::*;
 use std::fs::OpenOptions;
@@ -8,30 +9,9 @@ use std::sync::atomic::AtomicBool;
 use serde::{Deserialize, Serialize};
 use crate::stats;
 use crate::stats::OrderBookSnapshotStats;
+use crate::lightgbm;
 
 const SYMBOL: &'static str = "BTCTUSD";
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct OrderBookStats {
-    variance: Vec<f64>,
-    mean: Vec<f64>,
-    quantile: Vec<f64>,
-    weighted_variance: Vec<f64>,
-    weighted_mean: Vec<f64>,
-    weighted_quantile: Vec<f64>,
-}
-
-impl OrderBookStats {
-    fn push(&mut self, snapshot_stats: OrderBookSnapshotStats) {
-        self.variance.push(snapshot_stats.variance);
-        self.mean.push(snapshot_stats.mean);
-        self.quantile.push(snapshot_stats.quantile);
-        self.weighted_variance.push(snapshot_stats.variance);
-        self.weighted_mean.push(snapshot_stats.mean);
-        self.weighted_quantile.push(snapshot_stats.quantile);
-    }
-}
 
 fn to_file(filename: &str, data: String, append: bool) {
     let mut file = OpenOptions::new()
@@ -94,25 +74,36 @@ fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, m
                 }
             }
         }
+    };
+}
+
+fn maintain_order_book_stats(price: f64, order_book: &OrderBook, order_book_stats: &mut Vec<OrderBookSnapshotStats>) {
+    order_book_stats.push(stats::extract_order_book_snapshot_stats(price, &order_book));
+}
+
+fn add_to_model_inputs(order_book_stats: &Vec<OrderBookSnapshotStats>) {
+    for (i, x) in order_book_stats.iter().enumerate() {
+        if order_book_stats.len() >= i+60 {
+            let next_60_prices: &Vec<f64> = &order_book_stats[i..i+60].iter().map(|x| x.price).collect();
+            let mut next_60_prices_sorted = next_60_prices.clone();
+            next_60_prices_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let min_price = next_60_prices_sorted.first().unwrap();
+            let max_price = next_60_prices_sorted.last().unwrap();  
+            let current_price = x.price;
+            let bullish_change = max_price - current_price;
+            let bearish_change  = current_price - min_price;
+            let up = bullish_change > bearish_change;
+        
+        }  
     }
-    to_file(
-        "order_book.json",
-        serde_json::to_string(order_book).expect("Failed to stringify order book."),
-        false,
-    );
-}
-
-fn maintain_order_book_stats(order_book: &OrderBook, order_book_stats: &mut OrderBookStats) {
-    order_book_stats.push(stats::extract_order_book_snapshot_stats(&order_book));
-    to_file("order_book_stats.json", serde_json::to_string(order_book_stats).unwrap(), false);
-}
-
-fn add_to_model_inputs(order_book_stats: &OrderBookStats) {
-    to_file("input.txt", serde_json::to_string(order_book_stats).unwrap(), true);
+    
+    let svm_row = "".to_string();
+    to_file("lightgbm_input.txt", svm_row, true);
 }
 
 pub fn maintain() {
     let streams = [
+        format!("{}@kline_1m", SYMBOL.to_lowercase()),
         format!("{}@depth@100ms", SYMBOL.to_lowercase()),
         format!("{}@aggTrade", SYMBOL.to_lowercase()),
     ];
@@ -122,20 +113,19 @@ pub fn maintain() {
         bids: vec![],
         asks: vec![],
     };
-    let mut order_book_stats = OrderBookStats {
-        variance: vec![],
-        mean: vec![],
-        quantile: vec![],
-        weighted_variance: vec![],
-        weighted_mean: vec![],
-        weighted_quantile: vec![]
-    };
+    let mut current_price = 0f64;
+    let mut order_book_stats: Vec<OrderBookSnapshotStats> = vec![];
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         match event {
+            WebsocketEvent::Kline(event) => {
+                current_price = event.kline.close.parse::<f64>().unwrap();
+            },
             WebsocketEvent::DepthOrderBook(event) => {
                 maintain_order_book(event, &mut order_book, &market);
-                maintain_order_book_stats(&order_book, &mut order_book_stats);
-                add_to_model_inputs(&order_book_stats);
+                if current_price > 0.0 {
+                    maintain_order_book_stats(current_price, &order_book, &mut order_book_stats);
+                    add_to_model_inputs(&order_book_stats);
+                }
             }
             WebsocketEvent::AggrTrades(event) => {}
             _ => (),
