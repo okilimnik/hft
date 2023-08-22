@@ -1,6 +1,7 @@
 use average::{Variance, Quantile, Estimate, concatenate};
 use binance::model::OrderBook;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 concatenate!(Estimator,
     [Variance, variance, mean, sample_variance],
@@ -22,6 +23,14 @@ pub struct OrderBookSnapshotStats {
     pub bids_weighted_variance: f64,
     pub bids_weighted_mean: f64,
     pub bids_weighted_quantile: f64
+}
+
+impl fmt::Display for OrderBookSnapshotStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      write!(f, "{} {} {} {} {} {} {} {} {} {} {} {} {}", self.price, 
+        self.asks_variance, self.asks_mean, self.asks_quantile, self.asks_weighted_variance, self.asks_weighted_mean, self.asks_weighted_quantile,
+        self.bids_variance, self.bids_mean, self.bids_quantile, self.bids_weighted_variance, self.bids_weighted_mean, self.bids_weighted_quantile)
+    }
 }
 
 pub fn extract_order_book_snapshot_stats(price: f64, order_book: &OrderBook) -> OrderBookSnapshotStats {

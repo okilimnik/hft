@@ -82,23 +82,26 @@ fn maintain_order_book_stats(price: f64, order_book: &OrderBook, order_book_stat
 }
 
 fn add_to_model_inputs(order_book_stats: &Vec<OrderBookSnapshotStats>) {
-    for (i, x) in order_book_stats.iter().enumerate() {
-        if order_book_stats.len() >= i+60 {
-            let next_60_prices: &Vec<f64> = &order_book_stats[i..i+60].iter().map(|x| x.price).collect();
-            let mut next_60_prices_sorted = next_60_prices.clone();
-            next_60_prices_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let min_price = next_60_prices_sorted.first().unwrap();
-            let max_price = next_60_prices_sorted.last().unwrap();  
-            let current_price = x.price;
-            let bullish_change = max_price - current_price;
-            let bearish_change  = current_price - min_price;
-            let up = bullish_change > bearish_change;
-        
-        }  
+    let i = 59;
+    let next_60_prices: &Vec<f64> = &order_book_stats[i+1..i+60].iter().map(|x| x.price).collect();
+    let mut next_60_prices_sorted = next_60_prices.clone();
+    next_60_prices_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let min_price = next_60_prices_sorted.first().unwrap();
+    let max_price = next_60_prices_sorted.last().unwrap();  
+    let current_price = order_book_stats[i].price;
+    let bullish_change = max_price - current_price;
+    let bearish_change  = current_price - min_price;
+    let up = bullish_change > bearish_change;
+    let percentage_change;
+    if up {
+        percentage_change = bullish_change / current_price;
+    } else {
+        percentage_change = bearish_change / current_price;
     }
-    
-    let svm_row = "".to_string();
-    to_file("lightgbm_input.txt", svm_row, true);
+    let label = percentage_change.to_string();
+    let inputs = &order_book_stats[i-59..i+1];
+    let svm_row = inputs.iter().fold(label, |acc, x| format!("{acc} {x}"));
+    to_file("lightgbm_input.txt", svm_row, true); 
 }
 
 pub fn maintain() {
@@ -124,7 +127,12 @@ pub fn maintain() {
                 maintain_order_book(event, &mut order_book, &market);
                 if current_price > 0.0 {
                     maintain_order_book_stats(current_price, &order_book, &mut order_book_stats);
-                    add_to_model_inputs(&order_book_stats);
+                    let order_book_stats_is_warmed_up = order_book_stats.len() >= 120;
+                    if order_book_stats_is_warmed_up {
+                        // we don't need more than 120 values, first 60 for the input, next 60 for the label
+                        order_book_stats = order_book_stats[order_book_stats.len()-120..].to_vec(); 
+                        add_to_model_inputs(&order_book_stats);
+                    }        
                 }
             }
             WebsocketEvent::AggrTrades(event) => {}
