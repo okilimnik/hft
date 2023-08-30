@@ -1,11 +1,16 @@
-use average::{Variance, Quantile, Estimate, concatenate};
+use average::{concatenate, Estimate, Quantile, Variance};
 use binance::model::OrderBook;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-concatenate!(Estimator,
+const MAX_BTC_PRICE: f64 = 40000.0;
+const MIN_BTC_PRICE: f64 = 20000.0;
+
+concatenate!(
+    Estimator,
     [Variance, variance, mean, sample_variance],
-    [Quantile, quantile, quantile]);
+    [Quantile, quantile, quantile]
+);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -22,60 +27,48 @@ pub struct OrderBookSnapshotStats {
     pub bids_quantile: f64,
     pub bids_weighted_variance: f64,
     pub bids_weighted_mean: f64,
-    pub bids_weighted_quantile: f64
+    pub bids_weighted_quantile: f64,
 }
 
 impl fmt::Display for OrderBookSnapshotStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-      write!(f, "{} {} {} {} {} {} {} {} {} {} {} {} {}", self.price, 
+        // TSV format
+        write!(f, "{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}", min_max_scale(self.price), 
         self.asks_variance, self.asks_mean, self.asks_quantile, self.asks_weighted_variance, self.asks_weighted_mean, self.asks_weighted_quantile,
         self.bids_variance, self.bids_mean, self.bids_quantile, self.bids_weighted_variance, self.bids_weighted_mean, self.bids_weighted_quantile)
     }
 }
 
-pub fn extract_order_book_snapshot_stats(price: f64, order_book: &OrderBook) -> OrderBookSnapshotStats {
+fn min_max_scale(price: f64) -> f64 {
+    (price - MIN_BTC_PRICE) / (MAX_BTC_PRICE - MIN_BTC_PRICE)
+}
+
+pub fn extract_order_book_snapshot_stats(
+    price: f64,
+    order_book: &OrderBook,
+) -> OrderBookSnapshotStats {
     let asks_s: Estimator = order_book
         .asks
         .iter()
-        .map(|y| {
-            y.price
-        })
-        .collect(); 
+        .map(|y| min_max_scale(y.price))
+        .collect();
     let asks_weighted_s: Estimator = order_book
         .asks
         .iter()
-        .map(|y| {
-            y.price * y.qty
-        })
-        .collect(); 
-    let asks_weight: f64 = order_book
-        .asks
-        .iter()
-        .map(|y| {
-            y.qty
-        })
-        .sum();
-       let bids_s: Estimator = order_book
+        .map(|y| min_max_scale(y.price) * y.qty)
+        .collect();
+    let asks_weight: f64 = order_book.asks.iter().map(|y| y.qty).sum();
+    let bids_s: Estimator = order_book
         .bids
         .iter()
-        .map(|y| {
-            y.price
-        })
-        .collect(); 
+        .map(|y| min_max_scale(y.price))
+        .collect();
     let bids_weighted_s: Estimator = order_book
         .bids
         .iter()
-        .map(|y| {
-            y.price * y.qty
-        })
-        .collect(); 
-    let bids_weight: f64 = order_book
-        .bids
-        .iter()
-        .map(|y| {
-            y.qty
-        })
-        .sum();
+        .map(|y| min_max_scale(y.price) * y.qty)
+        .collect();
+    let bids_weight: f64 = order_book.bids.iter().map(|y| y.qty).sum();
     OrderBookSnapshotStats {
         price,
         asks_variance: asks_s.sample_variance(),

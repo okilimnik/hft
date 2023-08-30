@@ -1,11 +1,6 @@
 /target
 /.vscode
-/lightgbm
 /env
 .env
 .DS_Store
-alerts.txt
-alert.wav
-order_book.json
-order_book_stats.json
-lightgbm_input.txt
+lgbm*

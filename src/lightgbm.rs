@@ -2,16 +2,18 @@ use std::process::Command;
 
 pub fn train() {
     let output = Command::new("lightgbm")
-        .arg("config=train.conf")
+        .arg("config=lgbm.train.conf")
         .output()
         .expect("Failed to execute command");
-    println!("{:?}", output.stdout);
+    println!("{}", String::from_utf8_lossy(&output.stdout));
 }
 
 pub fn predict() {
     let output = Command::new("lightgbm")
-        .arg("config=predict.conf")
+        .arg("config=lgbm.predict.conf")
         .output()
         .expect("Failed to execute command");
-    println!("{:?}", output.stdout);
+    println!("{}", String::from_utf8_lossy(&output.stdout));
 }
+
+// TODO: dasdasdsad
