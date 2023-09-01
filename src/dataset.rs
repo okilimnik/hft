@@ -10,9 +10,9 @@ use std::sync::atomic::AtomicBool;
 
 const SYMBOL: &str = "BTCTUSD";
 const DATA_SIZE: usize = 360;
-const FILENAME_TRAIN: &str = "lgbm.train";
-const FILENAME_VALID: &str = "lgbm.valid";
-const FILENAME_TEST: &str = "lgbm.test";
+const FILENAME_TRAIN: &str = "./datasets/lgbm.train";
+const FILENAME_VALID: &str = "./datasets/lgbm.valid";
+const FILENAME_TEST: &str = "./datasets/lgbm.test";
 
 fn to_file(filename: &str, data: String, append: bool) {
     let mut file = OpenOptions::new()

@@ -1,11 +1,13 @@
 FROM rust:1 as builder
 WORKDIR /usr/src/app
 COPY . .
+RUN rustup component add rustfmt
 RUN cargo install --path .
 
 FROM debian:bullseye-slim
 #RUN apt-get update && apt-get install -y extra-runtime-dependencies && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/cargo/bin/neusa /usr/local/bin/neusa
+RUN mkdir datasets
 CMD ["neusa"]
 
 # docker build -t neusa .
