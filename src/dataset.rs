@@ -1,18 +1,14 @@
-use crate::stats;
-use crate::stats::OrderBookSnapshotStats;
 use binance::api::*;
 use binance::market::*;
 use binance::model::{DepthOrderBookEvent, OrderBook};
 use binance::websockets::*;
+use itertools::Itertools;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::sync::atomic::AtomicBool;
 
 const SYMBOL: &str = "BTCTUSD";
-const DATA_SIZE: usize = 360;
-const FILENAME_TRAIN: &str = "./datasets/lgbm.train";
-const FILENAME_VALID: &str = "./datasets/lgbm.valid";
-const FILENAME_TEST: &str = "./datasets/lgbm.test";
+const FILENAME_ORDER_BOOK: &str = "./datasets/order_book.txt";
 
 fn to_file(filename: &str, data: String, append: bool) {
     let mut file = OpenOptions::new()
@@ -26,7 +22,47 @@ fn to_file(filename: &str, data: String, append: bool) {
     };
 }
 
+fn prepare(data: &[(f64, f64)]) -> Vec<(String, f64)> {
+    data.iter()
+        .group_by(|e| format!("{:.0}", e.0))
+        .into_iter()
+        .map(|e| -> (String, f64) {
+            let (key, group) = e;
+            let sum: f64 = group.map(|e| e.1).sum();
+            (key, sum)
+        })
+        .sorted_by_key(|e| e.clone().0)
+        .collect_vec()
+}
+
+fn order_book_to_svm(label: &f64, order_book: &OrderBook) -> String {
+    let mut row: Vec<(String, f64)> = vec![];
+    let list: &Vec<(f64, f64)> = &order_book
+        .bids
+        .clone()
+        .into_iter()
+        .map(|e| (e.price.round(), e.qty))
+        .collect();
+    let mut bids = prepare(list);
+    let list: &Vec<(f64, f64)> = &order_book
+        .asks
+        .clone()
+        .into_iter()
+        .map(|e| (e.price.round(), -e.qty))
+        .collect();
+    let mut asks = prepare(list);
+    row.append(&mut bids);
+    row.append(&mut asks);
+    row.into_iter().fold(format!("{}", label), |acc, e| {
+        acc + " " + &e.0 + ":" + &format!("{:.5}", e.1)
+    })
+}
+
 fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, market: &Market) {
+    let price = &market
+        .get_price(SYMBOL)
+        .expect("Failed to get current price.")
+        .price;
     if order_book.last_update_id == 0 {
         order_book.clone_from(
             &market
@@ -74,84 +110,29 @@ fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, m
             }
         }
     };
-}
-
-fn maintain_order_book_stats(
-    price: f64,
-    order_book: &OrderBook,
-    order_book_stats: &mut Vec<OrderBookSnapshotStats>,
-) {
-    order_book_stats.push(stats::extract_order_book_snapshot_stats(price, order_book));
-}
-
-fn add_to_model_inputs(order_book_stats: &[OrderBookSnapshotStats]) {
-    let i = DATA_SIZE / 2 - 1;
-    let next_prices: &Vec<f64> = &order_book_stats[i + 1..i + DATA_SIZE / 2]
-        .iter()
-        .map(|x| x.price)
-        .collect();
-    let mut next_prices_sorted = next_prices.clone();
-    next_prices_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let min_price = next_prices_sorted.first().unwrap();
-    let max_price = next_prices_sorted.last().unwrap();
-    let current_price = order_book_stats[i].price;
-    let bullish_change = max_price - current_price;
-    let bearish_change = current_price - min_price;
-    let up = bullish_change > bearish_change;
-    let percentage_change = if up {
-        bullish_change / current_price
-    } else {
-        bearish_change / current_price
-    };
-    if percentage_change.abs() > 0.001 {
-        let label = format!("{:.5}", percentage_change);
-        let inputs = &order_book_stats[0..i + 1];
-        let svm_row = inputs.iter().fold(label, |acc, x| format!("{acc}\t{x}"));
-        to_file(FILENAME_TRAIN, svm_row, true);
-    }
+    to_file(
+        FILENAME_ORDER_BOOK,
+        order_book_to_svm(price, order_book),
+        true,
+    );
 }
 
 pub fn maintain() {
-    let streams = [
-        format!("{}@kline_1m", SYMBOL.to_lowercase()),
-        format!("{}@depth", SYMBOL.to_lowercase()),
-        // format!("{}@aggTrade", SYMBOL.to_lowercase()),
-    ];
     let market: Market = Binance::new(None, None);
     let mut order_book = OrderBook {
         last_update_id: 0,
         bids: vec![],
         asks: vec![],
     };
-    let mut current_price = 0f64;
-    let mut order_book_stats: Vec<OrderBookSnapshotStats> = vec![];
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
-        match event {
-            WebsocketEvent::Kline(event) => {
-                current_price = event.kline.close.parse::<f64>().unwrap();
-            }
-            WebsocketEvent::DepthOrderBook(event) => {
-                maintain_order_book(event, &mut order_book, &market);
-                if current_price > 0.0 {
-                    maintain_order_book_stats(current_price, &order_book, &mut order_book_stats);
-                    if order_book_stats.len() > DATA_SIZE {
-                        // we don't need more than DATA_SIZE values, first DATA_SIZE / 2 for the input, next DATA_SIZE / 2 for the label
-                        order_book_stats =
-                            order_book_stats[order_book_stats.len() - DATA_SIZE..].to_vec();
-                        add_to_model_inputs(&order_book_stats);
-                    }
-                }
-            }
-            WebsocketEvent::AggrTrades(event) => {}
-            _ => (),
-        };
-
+        if let WebsocketEvent::DepthOrderBook(event) = event {
+            maintain_order_book(event, &mut order_book, &market);
+        }
         Ok(())
     });
-
     let keep_running = AtomicBool::new(true);
     web_socket
-        .connect_multiple_streams(&streams)
+        .connect(&format!("{}@depth", SYMBOL.to_lowercase()))
         .expect("Cannot connect to ws streams");
     if let Err(e) = web_socket.event_loop(&keep_running) {
         {
