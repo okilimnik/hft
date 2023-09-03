@@ -10,7 +10,7 @@ pub async fn start() -> std::io::Result<()> {
                 .use_last_modified(true),
         )
     })
-    .bind(("0.0.0.0", 8080))?
+    .bind(("0.0.0.0", 443))?
     .run()
     .await
 }
