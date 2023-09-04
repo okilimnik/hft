@@ -3,6 +3,7 @@ use binance::market::*;
 use binance::model::{DepthOrderBookEvent, OrderBook};
 use binance::websockets::*;
 use itertools::Itertools;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::sync::atomic::AtomicBool;
@@ -11,6 +12,7 @@ const SYMBOL: &str = "BTCTUSD";
 const FILENAME_ORDER_BOOK: &str = "./datasets/order_book.txt";
 
 fn to_file(filename: &str, data: String, append: bool) {
+    fs::create_dir_all("./datasets").unwrap();
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
