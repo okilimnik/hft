@@ -8,6 +8,8 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::sync::atomic::AtomicBool;
 
+use crate::db;
+
 const SYMBOL: &str = "BTCTUSD";
 const FILENAME_ORDER_BOOK: &str = "./datasets/order_book.txt";
 
@@ -112,11 +114,12 @@ fn maintain_order_book(event: DepthOrderBookEvent, order_book: &mut OrderBook, m
             }
         }
     };
-    to_file(
+    db::insert(*price, order_book.clone()).await;
+    /*to_file(
         FILENAME_ORDER_BOOK,
         order_book_to_svm(price, order_book),
         true,
-    );
+    );*/
 }
 
 pub fn maintain() {
