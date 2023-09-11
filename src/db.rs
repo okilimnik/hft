@@ -1,4 +1,3 @@
-use binance::model::OrderBook;
 use firestore::FirestoreDb;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -15,7 +14,7 @@ impl Connection {
     }
 }
 
-const DATASETS_COLLECTION_NAME: &str = "datasets";
+const DATASETS_COLLECTION_NAME: &str = "OrderBook";
 lazy_static! {
     static ref FIRESTORE: Mutex<Connection> = Mutex::new(Connection::new());
 }
@@ -44,17 +43,17 @@ fn get_db() -> FirestoreDb {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Dataset {
-    price: f64,
-    order_book: OrderBook,
+    svm: String,
 }
 
-pub async fn insert(price: f64, order_book: OrderBook) {
+#[tokio::main]
+pub async fn insert(svm: String) {
     let _: Dataset = get_db()
         .fluent()
         .insert()
         .into(DATASETS_COLLECTION_NAME)
-        .document_id(order_book.last_update_id.to_string())
-        .object(&Dataset { price, order_book })
+        .generate_document_id()
+        .object(&Dataset { svm })
         .execute()
         .await
         .unwrap();

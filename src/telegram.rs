@@ -1,4 +1,4 @@
-use teloxide::{prelude::*, utils::command::BotCommands};
+/*use teloxide::{prelude::*, utils::command::BotCommands};
 
 pub async fn start_bot() {
     let bot = Bot::from_env();
@@ -20,4 +20,4 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
     };
 
     Ok(())
-}
+}*/

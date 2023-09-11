@@ -9,8 +9,8 @@ use std::thread;
 fn main() {
     dotenv().ok();
     thread::spawn(move || {
-        dataset::maintain();
+        dataset::from_binance_data();
     });
-    let _ = server::start();
+    // let _ = server::start();
     // lightgbm::train();
 }
