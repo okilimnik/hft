@@ -14,17 +14,18 @@ lazy_static! {
     );
 }
 
-pub fn create_file(filename: String) -> Result<(), Error> {
+pub fn create_file(filename: String, filepath: String) -> Result<(), Error> {
     let runtime = RUNTIME.lock().unwrap();
     let client = runtime.block_on(STORAGE.lock());
     let mut bytes: Vec<u8> = Vec::new();
-    for byte in File::open(&filename)?.bytes() {
+    for byte in File::open(&filepath)?.bytes() {
         bytes.push(byte?)
     }
-    let _ = runtime.block_on(
-        client
-            .object()
-            .create("dataset", bytes, &filename, "image/png"),
-    );
+    let _ = runtime.block_on(client.object().create(
+        "neusa-datasets",
+        bytes,
+        &filename,
+        "image/png",
+    ));
     Ok(())
 }

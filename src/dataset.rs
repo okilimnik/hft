@@ -5,8 +5,6 @@ use binance::websockets::*;
 use image::ImageBuffer;
 use std::collections::VecDeque;
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::prelude::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -61,19 +59,6 @@ impl OrderBookSnapshot {
             min_bid,
         }
     }
-}
-
-fn to_file(filename: &str, data: String, append: bool) {
-    fs::create_dir_all("./dataset").unwrap();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(append)
-        .open(format!("./{}", filename))
-        .unwrap_or_else(|_| panic!("Unable to write {}", filename));
-    if let Err(e) = writeln!(file, "{}", data) {
-        eprintln!("Couldn't write to file: {}", e);
-    };
 }
 
 fn update_order_book_snapshots(
@@ -154,7 +139,6 @@ fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
     if change_level < -4 {
         change_level = -4;
     }
-    println!("price change level: {:?}", change_level);
     let label: String = (-4..5).fold("".to_string(), |acc: String, i: i32| -> String {
         if i == change_level {
             format!("{acc}{}", "1")
@@ -233,7 +217,6 @@ fn create_input_image(order_book_snapshots: &VecDeque<OrderBookSnapshot>) {
         .unwrap()))
     .abs();
     let quantity_level_shift = max_quantity / 128f64;
-    println!("quantity_level_shift = {}", quantity_level_shift);
     let img = ImageBuffer::from_fn(HISTORY_SIZE as u32, HISTORY_SIZE as u32, |x, y| {
         let x_data = prepared_data.get(x as usize).unwrap();
         let y_data = x_data.get(y as usize).unwrap().to_owned();
@@ -257,12 +240,17 @@ fn create_input_image(order_book_snapshots: &VecDeque<OrderBookSnapshot>) {
     if let Some(label) = calc_label(current_price, *next_price) {
         let images_count = IMAGES_COUNT.fetch_add(1, Ordering::SeqCst);
         fs::create_dir_all("./dataset").unwrap();
-        let filename = format!("./dataset/{}_{}.png", label, images_count);
-        if let Err(e) = img.save(filename.clone()) {
+        let filename = format!("{}_{}.png", label, images_count);
+        let filepath = format!("./dataset/{}", filename);
+        if let Err(e) = img.save(filepath.clone()) {
             eprintln!("Cannot save dataset image on disk: {}", e);
-            let _ = gcp::create_file(filename.clone());
-            let _ = fs::remove_file(filename);
         };
+        if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()) {
+            eprintln!("Cannot save dataset file in cloud: {}", e);
+        }
+        if let Err(e) = fs::remove_file(filepath) {
+            eprintln!("Cannot remove dataset file after saving in cloud: {}", e);
+        }
     }
 }
 
