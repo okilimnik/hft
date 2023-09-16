@@ -21,10 +21,12 @@ pub fn create_file(filename: String, filepath: String) -> Result<(), Error> {
     for byte in File::open(&filepath)?.bytes() {
         bytes.push(byte?)
     }
+    let mut prefixed_path = "order_book_images/".to_string();
+    prefixed_path.push_str(&filename);
     let _ = runtime.block_on(client.object().create(
         "neusa-datasets",
         bytes,
-        &filename,
+        &prefixed_path,
         "image/png",
     ));
     Ok(())
