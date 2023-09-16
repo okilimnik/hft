@@ -2,27 +2,29 @@ use binance::api::*;
 use binance::market::*;
 use binance::model::{DepthOrderBookEvent, OrderBook};
 use binance::websockets::*;
-use image::{GenericImage, GenericImageView, ImageBuffer, RgbImage};
-use itertools::Itertools;
+use image::ImageBuffer;
 use std::collections::VecDeque;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+
+use crate::gcp;
 
 const SYMBOL: &str = "BTCTUSD";
-const FILENAME_ORDER_BOOK: &str = "./datasets/order_book.txt";
 const HISTORY_SIZE: usize = 60;
 const PREDICTION_HEAD: usize = 5;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
+static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 struct OrderBookSnapshot {
     order_book: OrderBook,
     best_ask: f64,
     best_bid: f64,
-    min_ask: f64,
-    max_bid: f64,
-    max_shift: f64,
+    max_ask: f64,
+    min_bid: f64,
 }
 
 impl OrderBookSnapshot {
@@ -30,11 +32,11 @@ impl OrderBookSnapshot {
         let best_ask = order_book
             .asks
             .iter()
-            .max_by_key(|x| (x.price * 100000.0).round() as i64)
+            .min_by_key(|x| (x.price * 100000.0).round() as i64)
             .unwrap()
             .price;
-        let min_ask = order_book
-            .asks
+        let min_bid = order_book
+            .bids
             .iter()
             .min_by_key(|x| (x.price * 100000.0).round() as i64)
             .unwrap()
@@ -42,31 +44,27 @@ impl OrderBookSnapshot {
         let best_bid = order_book
             .bids
             .iter()
-            .min_by_key(|x| (x.price * 100000.0).round() as i64)
+            .max_by_key(|x| (x.price * 100000.0).round() as i64)
             .unwrap()
             .price;
-        let max_bid = order_book
-            .bids
+        let max_ask = order_book
+            .asks
             .iter()
             .max_by_key(|x| (x.price * 100000.0).round() as i64)
             .unwrap()
             .price;
-        let max_shift = [max_bid - best_bid, best_ask - min_ask]
-            .iter()
-            .fold(0. / 0., f64::max);
         OrderBookSnapshot {
             order_book,
             best_ask,
             best_bid,
-            min_ask,
-            max_bid,
-            max_shift,
+            max_ask,
+            min_bid,
         }
     }
 }
 
 fn to_file(filename: &str, data: String, append: bool) {
-    fs::create_dir_all("./datasets").unwrap();
+    fs::create_dir_all("./dataset").unwrap();
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -76,56 +74,6 @@ fn to_file(filename: &str, data: String, append: bool) {
     if let Err(e) = writeln!(file, "{}", data) {
         eprintln!("Couldn't write to file: {}", e);
     };
-}
-
-pub fn to_image() {
-    let img = ImageBuffer::from_fn(512, 512, |x, y| {
-        if x % 2 == 0 {
-            image::Luma([0u8])
-        } else {
-            image::Luma([255u8])
-        }
-    });
-    if let Err(e) = img.save("./test.png") {
-        eprintln!("Cannot save dataset image on disk: {}", e);
-    };
-}
-
-fn prepare(data: &[(f64, f64)]) -> Vec<(String, f64)> {
-    data.iter()
-        .group_by(|e| format!("{:.0}", e.0))
-        .into_iter()
-        .map(|e| -> (String, f64) {
-            let (key, group) = e;
-            let sum: f64 = group.map(|e| e.1).sum();
-            (key, sum)
-        })
-        .sorted_by_key(|e| e.clone().0)
-        .collect_vec()
-}
-
-fn order_book_to_svm(label: &f64, order_book: &VecDeque<OrderBook>) -> Option<String> {
-    let mut row: Vec<(String, f64)> = vec![];
-    let list: &Vec<(f64, f64)> = &order_book
-        .bids
-        .clone()
-        .into_iter()
-        .map(|e| (e.price.round(), e.qty))
-        .collect();
-    let mut bids = prepare(list);
-    let list: &Vec<(f64, f64)> = &order_book
-        .asks
-        .clone()
-        .into_iter()
-        .map(|e| (e.price.round(), -e.qty))
-        .collect();
-    let mut asks = prepare(list);
-    row.append(&mut bids);
-    row.append(&mut asks);
-    let svm = row.into_iter().fold(format!("{}", label), |acc, e| {
-        acc + " " + &e.0 + ":" + &format!("{:.5}", e.1)
-    });
-    Some(svm)
 }
 
 fn update_order_book_snapshots(
@@ -141,16 +89,12 @@ fn update_order_book_snapshots(
     };
     if event.final_update_id
         > order_book_snapshots
-            .get(order_book_snapshots.len() - 1)
+            .back()
             .unwrap()
             .order_book
             .last_update_id
     {
-        let mut order_book = order_book_snapshots
-            .get(order_book_snapshots.len() - 1)
-            .unwrap()
-            .order_book
-            .clone();
+        let mut order_book = order_book_snapshots.back().unwrap().order_book.clone();
         order_book.last_update_id = event.final_update_id;
         for x in event.bids.iter() {
             let mut bid_level_present = false;
@@ -197,68 +141,129 @@ fn update_order_book_snapshots(
     }
 }
 
+// we define price change levels by step of 5%
+// -20 -15% -10% -5% 0% 5% 10% 15% 20% becomes -4 -3 -2 -1 0 1 2 3 4
+// al levels that expands more than 4 level become 4 level
+// we don't want create images if price change is 0
+fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
+    let mut change_level =
+        ((next_price - current_price) * 100.0 / current_price / 5.0).floor() as i32;
+    if change_level > 4 {
+        change_level = 4;
+    }
+    if change_level < -4 {
+        change_level = -4;
+    }
+    println!("price change level: {:?}", change_level);
+    let label: String = (-4..5).fold("".to_string(), |acc: String, i: i32| -> String {
+        if i == change_level {
+            format!("{acc}{}", "1")
+        } else {
+            format!("{acc}{}", "0")
+        }
+    });
+    if label == "000010000" {
+        None
+    } else {
+        Some(label)
+    }
+}
+
 fn create_input_image(order_book_snapshots: &VecDeque<OrderBookSnapshot>) {
-    let prepared_data: Vec<Vec<&f64>> = order_book_snapshots
+    let max_price = order_book_snapshots
         .iter()
-        .map(|snapshot| -> Vec<&f64> {
-            let price_level_shift = snapshot.max_shift / HISTORY_SIZE as f64 / 2.0;
+        .max_by(|a, b| a.max_ask.partial_cmp(&b.max_ask).unwrap())
+        .unwrap()
+        .max_ask;
+    let min_price = order_book_snapshots
+        .iter()
+        .min_by(|a, b| a.min_bid.partial_cmp(&b.min_bid).unwrap())
+        .unwrap()
+        .min_bid;
+    let price_level_shift = (max_price - min_price) / HISTORY_SIZE as f64;
+    let prepared_data: Vec<Vec<f64>> = order_book_snapshots
+        .iter()
+        .map(|snapshot| -> Vec<f64> {
             (0..HISTORY_SIZE)
-                .map(|y| -> &f64 {
-                    if y >= HISTORY_SIZE / 2 {
-                        &snapshot
-                            .order_book
-                            .bids
-                            .iter()
-                            .fold(0f64, |acc, bid| -> f64 {
-                                let price_level =
-                                    (((snapshot.max_bid - bid.price) / price_level_shift).floor())
-                                        as u32;
-                                if price_level == (y - HISTORY_SIZE / 2) as u32 {
-                                    acc + bid.qty
-                                } else {
-                                    acc
-                                }
-                            })
-                    } else {
-                        &snapshot
-                            .order_book
-                            .asks
-                            .iter()
-                            .fold(0f64, |acc, ask| -> f64 {
-                                let price_level =
-                                    (((ask.price - snapshot.min_ask) / price_level_shift).floor())
-                                        as u32;
-                                if (HISTORY_SIZE / 2) as u32 - price_level == y as u32 {
-                                    acc + ask.qty
-                                } else {
-                                    acc
-                                }
-                            })
-                    }
+                .map(|y| -> f64 {
+                    let bids: &Vec<(f64, f64, bool)> = &snapshot
+                        .order_book
+                        .bids
+                        .iter()
+                        .map(|x| (x.price, x.qty, true))
+                        .collect();
+                    let asks: &Vec<(f64, f64, bool)> = &snapshot
+                        .order_book
+                        .asks
+                        .iter()
+                        .map(|x| (x.price, x.qty, false))
+                        .collect();
+                    let mut prices: Vec<(f64, f64, bool)> = vec![];
+                    prices.append(bids.clone().as_mut());
+                    prices.append(asks.clone().as_mut());
+                    let acc_qty = &prices.iter().fold(0f64, |acc, price| -> f64 {
+                        let price_level =
+                            ((price.0 - min_price) / price_level_shift).floor() as u32;
+                        if price_level == y as u32 {
+                            if price.2 {
+                                acc + price.1
+                            } else {
+                                acc - price.1
+                            }
+                        } else {
+                            acc
+                        }
+                    });
+                    *acc_qty
                 })
                 .collect()
         })
         .collect();
-    let max_quantities: Vec<&&f64> = prepared_data
+    let max_quantities: Vec<&f64> = prepared_data
         .iter()
-        .map(|x| x.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap())
+        .map(|x| {
+            x.iter()
+                .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+                .unwrap()
+        })
         .collect();
-    let max_quantity = max_quantities
+    let max_quantity = (**(max_quantities
         .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap()
-        .to_owned()
-        .to_owned();
-    let quantity_level_shift = max_quantity / 255f64;
+        .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
+        .unwrap()))
+    .abs();
+    let quantity_level_shift = max_quantity / 128f64;
+    println!("quantity_level_shift = {}", quantity_level_shift);
     let img = ImageBuffer::from_fn(HISTORY_SIZE as u32, HISTORY_SIZE as u32, |x, y| {
         let x_data = prepared_data.get(x as usize).unwrap();
         let y_data = x_data.get(y as usize).unwrap().to_owned();
-        let color = (y_data / quantity_level_shift).floor() as u8;
+        let color = 127 + (y_data / quantity_level_shift).floor() as u8;
         image::Luma([color])
     });
-    if let Err(e) = img.save("./test.png") {
-        eprintln!("Cannot save dataset image on disk: {}", e);
-    };
+    let current_snapshot = order_book_snapshots.get(HISTORY_SIZE - 1).unwrap();
+    //let the best ask in the current snapshot be the current price
+    let current_price = current_snapshot.best_ask;
+    // let the min best ask in the prediction head be the next price
+    let next_prices: Vec<f64> = (HISTORY_SIZE..HISTORY_SIZE + PREDICTION_HEAD)
+        .map(|x| -> f64 {
+            let snapshot = order_book_snapshots.get(x).unwrap();
+            snapshot.best_ask
+        })
+        .collect();
+    let next_price = next_prices
+        .iter()
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    if let Some(label) = calc_label(current_price, *next_price) {
+        let images_count = IMAGES_COUNT.fetch_add(1, Ordering::SeqCst);
+        fs::create_dir_all("./dataset").unwrap();
+        let filename = format!("./dataset/{}_{}.png", label, images_count);
+        if let Err(e) = img.save(filename.clone()) {
+            eprintln!("Cannot save dataset image on disk: {}", e);
+            let _ = gcp::create_file(filename.clone());
+            let _ = fs::remove_file(filename);
+        };
+    }
 }
 
 pub fn from_binance_data() {

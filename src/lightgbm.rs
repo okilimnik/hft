@@ -15,5 +15,3 @@ pub fn predict() {
         .expect("Failed to execute command");
     println!("{}", String::from_utf8_lossy(&output.stdout));
 }
-
-// TODO: dasdasdsad
