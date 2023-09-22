@@ -17,6 +17,8 @@ pub async fn create_file(filename: String, filepath: String) -> Result<(), Error
     prefixed_path.push_str(&filename);
     let _ = client
         .object()
-        .create("neusa-datasets", bytes, &prefixed_path, "image/png");
+        .create("neusa-datasets", bytes, &prefixed_path, "image/png")
+        .await
+        .unwrap();
     Ok(())
 }

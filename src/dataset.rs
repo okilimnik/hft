@@ -1,33 +1,33 @@
+use crate::gcp;
 use binance::api::*;
 use binance::market::*;
 use binance::model::{DepthOrderBookEvent, OrderBook};
+use binance::websockets::WebSockets;
+use binance::websockets::WebsocketEvent;
 use image::ImageBuffer;
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
 use std::fs;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
-use std::time::Duration;
 use tokio::task;
-use tokio_cron_scheduler::Job;
-use tokio_cron_scheduler::JobScheduler;
-
-use crate::gcp;
 
 const SYMBOL: &str = "BTCTUSD";
 const HISTORY_SIZE: usize = 60;
-const PREDICTION_HEAD: usize = 5;
+const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
-static ORDER_BOOK: Mutex<VecDeque<OrderBookSnapshot>> = Mutex::new(VecDeque::new());
+static KEEP_RUNNING: AtomicBool = AtomicBool::new(true);
 
 lazy_static! {
-    static ref MARKET: Mutex<Market> = Mutex::new(Binance::new(None, None));
+    static ref MARKET: Market = Binance::new(None, None);
+    static ref ORDER_BOOK: tokio::sync::Mutex<VecDeque<OrderBookState>> =
+        tokio::sync::Mutex::new(VecDeque::new());
 }
 
 #[derive(Clone)]
-struct OrderBookSnapshot {
+struct OrderBookState {
     order_book: OrderBook,
     best_ask: f64,
     best_bid: f64,
@@ -35,8 +35,8 @@ struct OrderBookSnapshot {
     min_bid: f64,
 }
 
-impl OrderBookSnapshot {
-    fn from(order_book: OrderBook) -> OrderBookSnapshot {
+impl OrderBookState {
+    fn from(order_book: OrderBook) -> OrderBookState {
         let best_ask = order_book
             .asks
             .iter()
@@ -61,7 +61,7 @@ impl OrderBookSnapshot {
             .max_by_key(|x| (x.price * 100000.0).round() as i64)
             .unwrap()
             .price;
-        OrderBookSnapshot {
+        OrderBookState {
             order_book,
             best_ask,
             best_bid,
@@ -71,13 +71,83 @@ impl OrderBookSnapshot {
     }
 }
 
+async fn calc_new_order_book_state(event: DepthOrderBookEvent) -> VecDeque<OrderBookState> {
+    let mut order_book_state_series = ORDER_BOOK.lock().await;
+    if order_book_state_series.is_empty() {
+        let new_order_book = task::spawn_blocking(move || {
+            MARKET
+                .get_custom_depth(SYMBOL, 5000)
+                .expect("Failed to get initial order book.")
+        })
+        .await
+        .unwrap();
+        order_book_state_series.push_back(OrderBookState::from(new_order_book));
+    };
+    if event.final_update_id
+        > order_book_state_series
+            .back()
+            .unwrap()
+            .order_book
+            .last_update_id
+    {
+        let mut new_order_book = order_book_state_series.back().unwrap().order_book.clone();
+        new_order_book.last_update_id = event.final_update_id;
+        for x in event.bids.iter() {
+            let mut bid_level_present = false;
+            new_order_book.bids = new_order_book
+                .bids
+                .iter()
+                .map(|y| {
+                    if x.price == y.price {
+                        bid_level_present = true;
+                        x.clone()
+                    } else {
+                        y.clone()
+                    }
+                })
+                .filter(|x| x.qty > 0f64)
+                .collect();
+            if !bid_level_present && x.qty > 0f64 {
+                new_order_book.bids.insert(0, x.clone());
+            }
+        }
+        for x in event.asks.iter() {
+            let mut ask_level_present = false;
+            new_order_book.asks = new_order_book
+                .asks
+                .iter()
+                .map(|y| {
+                    if x.price == y.price {
+                        ask_level_present = true;
+                        x.clone()
+                    } else {
+                        y.clone()
+                    }
+                })
+                .filter(|x| x.qty > 0f64)
+                .collect();
+            if !ask_level_present && x.qty > 0f64 {
+                new_order_book.asks.insert(0, x.clone());
+            }
+        }
+        order_book_state_series.push_back(OrderBookState::from(new_order_book));
+    }
+    if order_book_state_series.len() > ORDER_BOOK_QUEUE_SIZE {
+        order_book_state_series.pop_front();
+    }
+    order_book_state_series.clone()
+}
+
 // we define price change levels by step of 5%
-// -0.2% -0.15% -0.1% -0.05% 0% 0.05% 0.1% 0.15% 0.2% becomes -4 -3 -2 -1 0 1 2 3 4
+// -0.1% -0.075% -0.05% -0.025% 0% 0.025% 0.05% 0.075% 0.1% becomes -4 -3 -2 -1 0 1 2 3 4
 // al levels that expands more than 4 level become 4 level
 // we don't want create images if price change is 0
 fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
-    let mut change_level =
-        ((next_price - current_price) * 100.0 / current_price / 0.1).floor() as i32;
+    let shift = next_price - current_price;
+    let mut change_level = ((shift.abs() * 100.0) / (current_price * 0.025)).floor() as i32;
+    if shift < 0f64 {
+        change_level = -change_level;
+    }
     if change_level > 4 {
         change_level = 4;
     }
@@ -85,20 +155,23 @@ fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
         change_level = -4;
     }
     let label: String = (-4..5).fold("".to_string(), |acc: String, i: i32| -> String {
-        if i == change_level {
+        if i == 0 {
+            acc
+        } else if i == change_level {
             format!("{acc}{}", "1")
         } else {
             format!("{acc}{}", "0")
         }
     });
-    if label == "000010000" {
+    println!("{}", label);
+    if label == "00000000" {
         None
     } else {
         Some(label)
     }
 }
 
-async fn create_input_image(order_book_snapshots: VecDeque<OrderBookSnapshot>) {
+async fn create_input_image(order_book_snapshots: &VecDeque<OrderBookState>) {
     let max_price = order_book_snapshots
         .iter()
         .max_by(|a, b| a.max_ask.partial_cmp(&b.max_ask).unwrap())
@@ -171,6 +244,7 @@ async fn create_input_image(order_book_snapshots: VecDeque<OrderBookSnapshot>) {
     let current_snapshot = order_book_snapshots.get(HISTORY_SIZE - 1).unwrap();
     //let the best ask in the current snapshot be the current price
     let current_price = current_snapshot.best_ask;
+    println!("current_price: {}", current_price);
     // let the min best ask in the prediction head be the next price
     let next_prices: Vec<f64> = (HISTORY_SIZE..HISTORY_SIZE + PREDICTION_HEAD)
         .map(|x| -> f64 {
@@ -182,6 +256,7 @@ async fn create_input_image(order_book_snapshots: VecDeque<OrderBookSnapshot>) {
         .iter()
         .min_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap();
+    println!("next price: {}", next_price);
     if let Some(label) = calc_label(current_price, *next_price) {
         let images_count = IMAGES_COUNT.fetch_add(1, Ordering::SeqCst);
         fs::create_dir_all("./dataset").unwrap();
@@ -199,44 +274,24 @@ async fn create_input_image(order_book_snapshots: VecDeque<OrderBookSnapshot>) {
     }
 }
 
-async fn run_job() {
-    let event = task::spawn_blocking(move || {
-        MARKET
-            .lock()
-            .unwrap()
-            .get_custom_depth(SYMBOL, 5000)
-            .unwrap()
-    })
-    .await
-    .unwrap();
-    let mut order_book = ORDER_BOOK.lock().unwrap();
-    order_book.push_back(OrderBookSnapshot::from(event));
-    if order_book.len() > ORDER_BOOK_QUEUE_SIZE {
-        order_book.pop_front();
-    }
-    if order_book.len() == ORDER_BOOK_QUEUE_SIZE {
-        let snapshot = order_book.clone();
-        tokio::spawn(async move {
-            create_input_image(snapshot).await;
-        });
-    }
-}
-
 pub async fn from_binance_data() {
-    let scheduler = JobScheduler::new().await.unwrap();
-    scheduler
-        .add(
-            Job::new("1/5 * * * * *", |_uuid, _l| {
-                println!("Starting job");
-                tokio::spawn(async move {
-                    run_job().await;
-                });
-            })
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    scheduler.start().await.unwrap();
-    tokio::time::sleep(Duration::from_secs(100)).await;
+    let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
+        if let WebsocketEvent::DepthOrderBook(event) = event {
+            tokio::spawn(async move {
+                let order_book_state_series = calc_new_order_book_state(event).await;
+                if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
+                    create_input_image(&order_book_state_series).await;
+                }
+            });
+        }
+        Ok(())
+    });
+    web_socket
+        .connect(&format!("{}@depth", SYMBOL.to_lowercase()))
+        .expect("Cannot connect to ws streams");
+    if let Err(e) = web_socket.event_loop(&KEEP_RUNNING) {
+        {
+            eprintln!("Error: {}", e);
+        }
+    }
 }
