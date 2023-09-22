@@ -4,6 +4,7 @@ use binance::market::*;
 use binance::model::{DepthOrderBookEvent, OrderBook};
 use binance::websockets::WebSockets;
 use binance::websockets::WebsocketEvent;
+use error_chain::bail;
 use image::ImageBuffer;
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
@@ -11,7 +12,9 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use tokio::task;
+use tungstenite::Message;
 
 const SYMBOL: &str = "BTCTUSD";
 const HISTORY_SIZE: usize = 60;
@@ -138,7 +141,7 @@ async fn calc_new_order_book_state(event: DepthOrderBookEvent) -> VecDeque<Order
     order_book_state_series.clone()
 }
 
-// we define price change levels by step of 5%
+// we define price change levels by step of 0.025%
 // -0.1% -0.075% -0.05% -0.025% 0% 0.025% 0.05% 0.075% 0.1% becomes -4 -3 -2 -1 0 1 2 3 4
 // al levels that expands more than 4 level become 4 level
 // we don't want create images if price change is 0
@@ -289,9 +292,22 @@ pub async fn from_binance_data() {
     web_socket
         .connect(&format!("{}@depth", SYMBOL.to_lowercase()))
         .expect("Cannot connect to ws streams");
-    if let Err(e) = web_socket.event_loop(&KEEP_RUNNING) {
-        {
-            eprintln!("Error: {}", e);
+    loop {
+        if let Some(ref mut socket) = web_socket.socket {
+            let message = socket.0.read_message().unwrap();
+            match message {
+                Message::Text(msg) => {
+                    if let Err(e) = web_socket.handle_msg(&msg) {
+                        println!("Error on handling stream message: {:?}", e);
+                    }
+                }
+                Message::Ping(_) => {
+                    socket.0.write_message(Message::Pong(vec![])).unwrap();
+                }
+                Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => (),
+                Message::Close(e) => println!("Disconnected {:?}", e),
+            }
         }
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }

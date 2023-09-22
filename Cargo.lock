@@ -105,7 +105,7 @@ checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
 [[package]]
 name = "binance"
 version = "0.20.2"
-source = "git+https://github.com/okilimnik/binance-rs.git?rev=10c72c6#10c72c6a54a47f2c8e54463999fc1f0f6fb26c1a"
+source = "git+https://github.com/okilimnik/binance-rs.git?rev=e5ea49c#e5ea49ca1719e13d630738cdef433610896f457c"
 dependencies = [
  "error-chain",
  "hex",
@@ -398,6 +398,7 @@ version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d2f06b9cac1506ece98fe3231e3cc9c4410ec3d5b1f24ae1c8946f0742cdefc"
 dependencies = [
+ "backtrace",
  "version_check",
 ]
 
@@ -951,12 +952,14 @@ dependencies = [
  "average",
  "binance",
  "cloud-storage",
+ "error-chain",
  "image",
  "lazy_static",
  "serde",
  "serde_json",
  "tokio",
  "tokio-cron-scheduler",
+ "tungstenite",
 ]
 
 [[package]]

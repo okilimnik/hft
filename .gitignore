@@ -5,5 +5,5 @@
 .DS_Store
 lgbm*
 *.txt
-/datasets
+/dataset
 gcp.json
