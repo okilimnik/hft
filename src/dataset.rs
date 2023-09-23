@@ -4,12 +4,10 @@ use binance::market::*;
 use binance::model::{DepthOrderBookEvent, OrderBook};
 use binance::websockets::WebSockets;
 use binance::websockets::WebsocketEvent;
-use error_chain::bail;
 use image::ImageBuffer;
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
 use std::fs;
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -21,7 +19,6 @@ const HISTORY_SIZE: usize = 60;
 const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
-static KEEP_RUNNING: AtomicBool = AtomicBool::new(true);
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -74,7 +71,7 @@ impl OrderBookState {
     }
 }
 
-async fn calc_new_order_book_state(event: DepthOrderBookEvent) -> VecDeque<OrderBookState> {
+async fn calc_new_order_book_state(event: DepthOrderBookEvent) {
     let mut order_book_state_series = ORDER_BOOK.lock().await;
     if order_book_state_series.is_empty() {
         let new_order_book = task::spawn_blocking(move || {
@@ -138,7 +135,9 @@ async fn calc_new_order_book_state(event: DepthOrderBookEvent) -> VecDeque<Order
     if order_book_state_series.len() > ORDER_BOOK_QUEUE_SIZE {
         order_book_state_series.pop_front();
     }
-    order_book_state_series.clone()
+    if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
+        create_input_image(&order_book_state_series).await;
+    }
 }
 
 // we define price change levels by step of 0.025%
@@ -265,15 +264,17 @@ async fn create_input_image(order_book_snapshots: &VecDeque<OrderBookState>) {
         fs::create_dir_all("./dataset").unwrap();
         let filename = format!("{}_{}.png", label, images_count);
         let filepath = format!("./dataset/{}", filename);
-        if let Err(e) = img.save(filepath.clone()) {
-            eprintln!("Cannot save dataset image on disk: {}", e);
-        };
-        if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
-            eprintln!("Cannot save dataset file in cloud: {}", e);
-        }
-        if let Err(e) = fs::remove_file(filepath) {
-            eprintln!("Cannot remove dataset file after saving in cloud: {}", e);
-        }
+        tokio::spawn(async move {
+            if let Err(e) = img.save(filepath.clone()) {
+                eprintln!("Cannot save dataset image on disk: {}", e);
+            }
+            if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
+                eprintln!("Cannot save dataset file in cloud: {}", e);
+            }
+            if let Err(e) = fs::remove_file(filepath) {
+                eprintln!("Cannot remove dataset file after saving in cloud: {}", e);
+            }
+        });
     }
 }
 
@@ -281,10 +282,7 @@ pub async fn from_binance_data() {
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         if let WebsocketEvent::DepthOrderBook(event) = event {
             tokio::spawn(async move {
-                let order_book_state_series = calc_new_order_book_state(event).await;
-                if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-                    create_input_image(&order_book_state_series).await;
-                }
+                calc_new_order_book_state(event).await;
             });
         }
         Ok(())
