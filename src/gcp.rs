@@ -1,6 +1,8 @@
-use cloud_storage::{Client, Error};
+use cloud_storage::{object::ObjectList, Client, Error, ListRequest, Object};
+use futures::{Stream, TryStreamExt};
+use itertools::Itertools;
 use lazy_static::lazy_static;
-use std::{fs::File, io::Read};
+use std::{collections::HashMap, fs::File, io::Read};
 use tokio::sync;
 
 lazy_static! {
@@ -21,4 +23,27 @@ pub async fn create_file(filename: String, filepath: String) -> Result<(), Error
         .await
         .unwrap();
     Ok(())
+}
+
+pub async fn list_files_by_categories() -> HashMap<String, Vec<String>> {
+    STORAGE
+        .lock()
+        .await
+        .object()
+        .list("neusa-datasets", ListRequest::default())
+        .await
+        .unwrap()
+        .try_fold(HashMap::new(), |acc, list| async move {
+            Ok(list
+                .items
+                .iter()
+                .fold(acc, |mut inner_acc, file| -> HashMap<String, Vec<String>> {
+                    let category = file.name.split_once('_').unwrap().0;
+                    let new_val = inner_acc.get_mut(category).unwrap();
+                    new_val.push(file.name.clone());
+                    inner_acc
+                }))
+        })
+        .await
+        .unwrap()
 }

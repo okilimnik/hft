@@ -6,5 +6,5 @@ mod utils;
 #[tokio::main]
 async fn main() {
     //dotenv().ok();
-    dataset::from_binance_data().await;
+    dataset::collect::from_binance_data().await;
 }
