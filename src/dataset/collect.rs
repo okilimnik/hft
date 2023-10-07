@@ -5,7 +5,10 @@ use binance::model::{DepthOrderBookEvent, OrderBook};
 use binance::websockets::WebSockets;
 use binance::websockets::WebsocketEvent;
 use image::ImageBuffer;
+use itertools::Itertools;
 use lazy_static::lazy_static;
+use merge_hashmap::Merge;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs;
 use std::sync::atomic::AtomicUsize;
@@ -26,52 +29,68 @@ lazy_static! {
         tokio::sync::Mutex::new(VecDeque::new());
 }
 
-#[derive(Clone)]
+#[derive(Clone, Merge)]
 struct OrderBookState {
-    order_book: OrderBook,
-    best_ask: f64,
-    best_bid: f64,
-    max_ask: f64,
-    min_bid: f64,
+    #[merge(strategy = merge_hashmap::ord::max)]
+    pub last_update_id: u64,
+    #[merge(strategy = merge_hashmap::hashmap::overwrite)]
+    pub bids: HashMap<String, f64>,
+    #[merge(strategy = merge_hashmap::hashmap::overwrite)]
+    pub asks: HashMap<String, f64>,
 }
 
 impl OrderBookState {
-    fn from(order_book: OrderBook) -> OrderBookState {
-        let best_ask = order_book
-            .asks
-            .iter()
-            .min_by_key(|x| (x.price * 100000.0).round() as i64)
-            .unwrap()
-            .price;
-        let min_bid = order_book
-            .bids
-            .iter()
-            .min_by_key(|x| (x.price * 100000.0).round() as i64)
-            .unwrap()
-            .price;
-        let best_bid = order_book
-            .bids
-            .iter()
-            .max_by_key(|x| (x.price * 100000.0).round() as i64)
-            .unwrap()
-            .price;
-        let max_ask = order_book
-            .asks
-            .iter()
-            .max_by_key(|x| (x.price * 100000.0).round() as i64)
-            .unwrap()
-            .price;
+    fn from1(order_book: OrderBook) -> OrderBookState {
         OrderBookState {
-            order_book,
-            best_ask,
-            best_bid,
-            max_ask,
-            min_bid,
+            bids: order_book
+                .bids
+                .iter()
+                .map(|x| (format!("{}", x.price), x.qty))
+                .collect(),
+            asks: order_book
+                .asks
+                .iter()
+                .map(|x| (format!("{}", x.price), x.qty))
+                .collect(),
+            last_update_id: order_book.last_update_id,
         }
+    }
+
+    fn from2(order_book: DepthOrderBookEvent) -> OrderBookState {
+        OrderBookState {
+            bids: order_book
+                .bids
+                .iter()
+                .map(|x| (format!("{}", x.price), x.qty))
+                .collect(),
+            asks: order_book
+                .asks
+                .iter()
+                .map(|x| (format!("{}", x.price), x.qty))
+                .collect(),
+            last_update_id: order_book.final_update_id,
+        }
+    }
+
+    fn filter(&mut self) {
+        let filtered_asks: HashMap<String, f64> = self
+            .asks
+            .iter()
+            .filter(|x| *x.1 > 0f64)
+            .map(|x| (x.0.to_owned(), *x.1))
+            .collect();
+        let filtered_bids: HashMap<String, f64> = self
+            .bids
+            .iter()
+            .filter(|x| *x.1 > 0f64)
+            .map(|x| (x.0.to_owned(), *x.1))
+            .collect();
+        self.asks = filtered_asks;
+        self.bids = filtered_bids;
     }
 }
 
-async fn calc_new_order_book_state(event: DepthOrderBookEvent) {
+async fn calc_new_state(event: DepthOrderBookEvent) {
     let mut order_book_state_series = ORDER_BOOK.lock().await;
     if order_book_state_series.is_empty() {
         let new_order_book = task::spawn_blocking(move || {
@@ -81,56 +100,13 @@ async fn calc_new_order_book_state(event: DepthOrderBookEvent) {
         })
         .await
         .unwrap();
-        order_book_state_series.push_back(OrderBookState::from(new_order_book));
+        order_book_state_series.push_back(OrderBookState::from1(new_order_book));
     };
-    if event.final_update_id
-        > order_book_state_series
-            .back()
-            .unwrap()
-            .order_book
-            .last_update_id
-    {
-        let mut new_order_book = order_book_state_series.back().unwrap().order_book.clone();
-        new_order_book.last_update_id = event.final_update_id;
-        for x in event.bids.iter() {
-            let mut bid_level_present = false;
-            new_order_book.bids = new_order_book
-                .bids
-                .iter()
-                .map(|y| {
-                    if x.price == y.price {
-                        bid_level_present = true;
-                        x.clone()
-                    } else {
-                        y.clone()
-                    }
-                })
-                .filter(|x| x.qty > 0f64)
-                .collect();
-            if !bid_level_present && x.qty > 0f64 {
-                new_order_book.bids.insert(0, x.clone());
-            }
-        }
-        for x in event.asks.iter() {
-            let mut ask_level_present = false;
-            new_order_book.asks = new_order_book
-                .asks
-                .iter()
-                .map(|y| {
-                    if x.price == y.price {
-                        ask_level_present = true;
-                        x.clone()
-                    } else {
-                        y.clone()
-                    }
-                })
-                .filter(|x| x.qty > 0f64)
-                .collect();
-            if !ask_level_present && x.qty > 0f64 {
-                new_order_book.asks.insert(0, x.clone());
-            }
-        }
-        order_book_state_series.push_back(OrderBookState::from(new_order_book));
+    let mut new_order_book = order_book_state_series.back().unwrap().clone();
+    if event.final_update_id > new_order_book.last_update_id {
+        new_order_book.merge(OrderBookState::from2(event));
+        new_order_book.filter();
+        order_book_state_series.push_back(new_order_book);
     }
     if order_book_state_series.len() > ORDER_BOOK_QUEUE_SIZE {
         order_book_state_series.pop_front();
@@ -173,52 +149,81 @@ fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
     }
 }
 
-async fn create_input_image(order_book_snapshots: &VecDeque<OrderBookState>) {
-    let max_price = order_book_snapshots
+fn get_max_price(order_book_snapshots: &VecDeque<OrderBookState>) -> f64 {
+    order_book_snapshots
         .iter()
         .max_by(|a, b| a.max_ask.partial_cmp(&b.max_ask).unwrap())
         .unwrap()
-        .max_ask;
-    let min_price = order_book_snapshots
+        .max_ask
+}
+
+fn get_min_price(order_book_snapshots: &VecDeque<OrderBookState>) -> f64 {
+    order_book_snapshots
         .iter()
         .min_by(|a, b| a.min_bid.partial_cmp(&b.min_bid).unwrap())
         .unwrap()
-        .min_bid;
-    let price_level_shift = (max_price - min_price) / HISTORY_SIZE as f64;
-    let prepared_data: Vec<Vec<f64>> = order_book_snapshots
+        .min_bid
+}
+
+fn get_rich_prices(state: &OrderBookState) -> Vec<(f64, f64, bool)> {
+    let mut bids: Vec<(f64, f64, bool)> = state
+        .order_book
+        .bids
         .iter()
-        .map(|snapshot| -> Vec<f64> {
+        .map(|x| (x.price, x.qty, false))
+        .collect();
+    let mut asks: Vec<(f64, f64, bool)> = state
+        .order_book
+        .asks
+        .iter()
+        .map(|x| (x.price, x.qty, true))
+        .collect();
+    let mut prices: Vec<(f64, f64, bool)> = vec![];
+    prices.append(&mut bids);
+    prices.append(&mut asks);
+    prices
+}
+
+fn get_acc_quantity(
+    prices: Vec<&(f64, f64, bool)>,
+    price_level_shift: f64,
+    min_price: f64,
+    level: usize,
+) -> f64 {
+    prices.iter().fold(0f64, |acc, price| -> f64 {
+        let price_level = ((price.0 - min_price) / price_level_shift).floor() as u32;
+        if price_level == level as u32 {
+            acc + price.1
+        } else {
+            acc
+        }
+    })
+}
+
+async fn create_input_image(order_book_snapshots: &VecDeque<OrderBookState>) {
+    let max_price = get_max_price(order_book_snapshots);
+    let min_price = get_min_price(order_book_snapshots);
+    let price_level_shift = (max_price - min_price) / HISTORY_SIZE as f64;
+    let prepared_data: Vec<Vec<(f64, f64)>> = order_book_snapshots
+        .iter()
+        .map(|snapshot| -> Vec<(f64, f64)> {
             (0..HISTORY_SIZE)
-                .map(|y| -> f64 {
-                    let bids: &Vec<(f64, f64, bool)> = &snapshot
-                        .order_book
-                        .bids
-                        .iter()
-                        .map(|x| (x.price, x.qty, true))
-                        .collect();
-                    let asks: &Vec<(f64, f64, bool)> = &snapshot
-                        .order_book
-                        .asks
-                        .iter()
-                        .map(|x| (x.price, x.qty, false))
-                        .collect();
-                    let mut prices: Vec<(f64, f64, bool)> = vec![];
-                    prices.append(bids.clone().as_mut());
-                    prices.append(asks.clone().as_mut());
-                    let acc_qty = &prices.iter().fold(0f64, |acc, price| -> f64 {
-                        let price_level =
-                            ((price.0 - min_price) / price_level_shift).floor() as u32;
-                        if price_level == y as u32 {
-                            if price.2 {
-                                acc + price.1
-                            } else {
-                                acc - price.1
-                            }
-                        } else {
-                            acc
-                        }
-                    });
-                    *acc_qty
+                .map(|y| -> (f64, f64) {
+                    let prices = get_rich_prices(snapshot);
+                    (
+                        get_acc_quantity(
+                            prices.iter().filter(|x| x.2).collect_vec(),
+                            price_level_shift,
+                            min_price,
+                            y,
+                        ),
+                        get_acc_quantity(
+                            prices.iter().filter(|x| !x.2).collect_vec(),
+                            price_level_shift,
+                            min_price,
+                            y,
+                        ),
+                    )
                 })
                 .collect()
         })
@@ -282,7 +287,7 @@ pub async fn from_binance_data() {
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         if let WebsocketEvent::DepthOrderBook(event) = event {
             tokio::spawn(async move {
-                calc_new_order_book_state(event).await;
+                calc_new_state(event).await;
             });
         }
         Ok(())
@@ -309,3 +314,6 @@ pub async fn from_binance_data() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
+
+#[test]
+fn test_image_content() {}

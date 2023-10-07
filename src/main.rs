@@ -2,7 +2,7 @@ mod dataset;
 mod gcp;
 mod utils;
 use clap::Parser;
-//use dotenv::dotenv;
+use dotenv::dotenv;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -14,12 +14,11 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    //dotenv().ok();
+    dotenv().ok();
     let args = Args::parse();
 
     match args.task.as_str() {
         "collect" => dataset::collect::from_binance_data().await,
-        "balance" => dataset::balance::balance_categories().await,
         _ => print!("No task, exiting..."),
     };
 }

@@ -17,3 +17,6 @@ tungstenite = "0.18.0"
 futures = "0.3.28"
 itertools = "0.11.0"
 clap = { version = "4.4.4", features = ["derive"] }
+dotenv = "0.15.0"
+rand = "0.8.5"
+merge-hashmap = "0.1.2"

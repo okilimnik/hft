@@ -38,9 +38,14 @@ pub async fn list_files_by_categories() -> HashMap<String, Vec<String>> {
                 .items
                 .iter()
                 .fold(acc, |mut inner_acc, file| -> HashMap<String, Vec<String>> {
-                    let category = file.name.split_once('_').unwrap().0;
-                    let new_val = inner_acc.get_mut(category).unwrap();
+                    let filename = file.name.replace("order_book_images/", "");
+                    let category = filename.split_once('_').unwrap().0;
+                    let mut new_val: Vec<String> = match inner_acc.get_mut(category) {
+                        Some(v) => v.to_owned(),
+                        None => vec![],
+                    };
                     new_val.push(file.name.clone());
+                    inner_acc.insert(category.to_string(), new_val);
                     inner_acc
                 }))
         })
