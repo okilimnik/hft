@@ -1,14 +1,13 @@
 use crate::gcp;
 use binance::api::*;
 use binance::market::*;
-use binance::model::{DepthOrderBookEvent, OrderBook};
+use binance::model::DepthOrderBookEvent;
 use binance::websockets::WebSockets;
 use binance::websockets::WebsocketEvent;
 use image::ImageBuffer;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use merge_hashmap::Merge;
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs;
 use std::sync::atomic::AtomicUsize;
@@ -16,6 +15,8 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::task;
 use tungstenite::Message;
+
+use crate::dataset::order_book::OrderBookState;
 
 const SYMBOL: &str = "BTCTUSD";
 const HISTORY_SIZE: usize = 60;
@@ -27,67 +28,6 @@ lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
     static ref ORDER_BOOK: tokio::sync::Mutex<VecDeque<OrderBookState>> =
         tokio::sync::Mutex::new(VecDeque::new());
-}
-
-#[derive(Clone, Merge)]
-struct OrderBookState {
-    #[merge(strategy = merge_hashmap::ord::max)]
-    pub last_update_id: u64,
-    #[merge(strategy = merge_hashmap::hashmap::overwrite)]
-    pub bids: HashMap<String, f64>,
-    #[merge(strategy = merge_hashmap::hashmap::overwrite)]
-    pub asks: HashMap<String, f64>,
-}
-
-impl OrderBookState {
-    fn from1(order_book: OrderBook) -> OrderBookState {
-        OrderBookState {
-            bids: order_book
-                .bids
-                .iter()
-                .map(|x| (format!("{}", x.price), x.qty))
-                .collect(),
-            asks: order_book
-                .asks
-                .iter()
-                .map(|x| (format!("{}", x.price), x.qty))
-                .collect(),
-            last_update_id: order_book.last_update_id,
-        }
-    }
-
-    fn from2(order_book: DepthOrderBookEvent) -> OrderBookState {
-        OrderBookState {
-            bids: order_book
-                .bids
-                .iter()
-                .map(|x| (format!("{}", x.price), x.qty))
-                .collect(),
-            asks: order_book
-                .asks
-                .iter()
-                .map(|x| (format!("{}", x.price), x.qty))
-                .collect(),
-            last_update_id: order_book.final_update_id,
-        }
-    }
-
-    fn filter(&mut self) {
-        let filtered_asks: HashMap<String, f64> = self
-            .asks
-            .iter()
-            .filter(|x| *x.1 > 0f64)
-            .map(|x| (x.0.to_owned(), *x.1))
-            .collect();
-        let filtered_bids: HashMap<String, f64> = self
-            .bids
-            .iter()
-            .filter(|x| *x.1 > 0f64)
-            .map(|x| (x.0.to_owned(), *x.1))
-            .collect();
-        self.asks = filtered_asks;
-        self.bids = filtered_bids;
-    }
 }
 
 async fn calc_new_state(event: DepthOrderBookEvent) {
