@@ -8,6 +8,7 @@ use image::ImageBuffer;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use merge_hashmap::Merge;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs;
 use std::sync::atomic::AtomicUsize;
@@ -89,39 +90,24 @@ fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
     }
 }
 
-fn get_max_price(order_book_snapshots: &VecDeque<OrderBookState>) -> f64 {
-    order_book_snapshots
+fn get_max_price(states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)>) -> f64 {
+    states
         .iter()
-        .max_by(|a, b| a.max_ask.partial_cmp(&b.max_ask).unwrap())
+        .map(|x| x.0.iter().chain(x.1.iter()).max_by_key(|x| x.0).unwrap().0)
+        .max()
         .unwrap()
-        .max_ask
+        .parse()
+        .unwrap()
 }
 
-fn get_min_price(order_book_snapshots: &VecDeque<OrderBookState>) -> f64 {
-    order_book_snapshots
+fn get_min_price(states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)>) -> f64 {
+    states
         .iter()
-        .min_by(|a, b| a.min_bid.partial_cmp(&b.min_bid).unwrap())
+        .map(|x| x.0.iter().chain(x.1.iter()).min_by_key(|x| x.0).unwrap().0)
+        .min()
         .unwrap()
-        .min_bid
-}
-
-fn get_rich_prices(state: &OrderBookState) -> Vec<(f64, f64, bool)> {
-    let mut bids: Vec<(f64, f64, bool)> = state
-        .order_book
-        .bids
-        .iter()
-        .map(|x| (x.price, x.qty, false))
-        .collect();
-    let mut asks: Vec<(f64, f64, bool)> = state
-        .order_book
-        .asks
-        .iter()
-        .map(|x| (x.price, x.qty, true))
-        .collect();
-    let mut prices: Vec<(f64, f64, bool)> = vec![];
-    prices.append(&mut bids);
-    prices.append(&mut asks);
-    prices
+        .parse()
+        .unwrap()
 }
 
 fn get_acc_quantity(
@@ -140,69 +126,114 @@ fn get_acc_quantity(
     })
 }
 
-async fn create_input_image(order_book_snapshots: &VecDeque<OrderBookState>) {
-    let max_price = get_max_price(order_book_snapshots);
-    let min_price = get_min_price(order_book_snapshots);
-    let price_level_shift = (max_price - min_price) / HISTORY_SIZE as f64;
-    let prepared_data: Vec<Vec<(f64, f64)>> = order_book_snapshots
-        .iter()
-        .map(|snapshot| -> Vec<(f64, f64)> {
-            (0..HISTORY_SIZE)
-                .map(|y| -> (f64, f64) {
-                    let prices = get_rich_prices(snapshot);
-                    (
-                        get_acc_quantity(
-                            prices.iter().filter(|x| x.2).collect_vec(),
-                            price_level_shift,
-                            min_price,
-                            y,
-                        ),
-                        get_acc_quantity(
-                            prices.iter().filter(|x| !x.2).collect_vec(),
-                            price_level_shift,
-                            min_price,
-                            y,
-                        ),
-                    )
-                })
-                .collect()
-        })
-        .collect();
-    let max_quantities: Vec<&f64> = prepared_data
+fn denoise(
+    states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)>,
+    max_price: f64,
+    min_price: f64,
+) -> (Vec<HashMap<u32, f64>>, Vec<HashMap<u32, f64>>) {
+    let shift = (max_price - min_price) / HISTORY_SIZE as f64;
+    let ask_qts: Vec<HashMap<u32, f64>> = states
         .iter()
         .map(|x| {
-            x.iter()
-                .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
-                .unwrap()
+            x.0.iter().fold(
+                HashMap::new(),
+                |mut acc: HashMap<u32, f64>, a: &(String, f64)| -> HashMap<u32, f64> {
+                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
+                    *acc.entry(level).or_insert(0f64) += a.1;
+                    acc
+                },
+            )
         })
         .collect();
-    let max_quantity = (**(max_quantities
+    let bid_qts: Vec<HashMap<u32, f64>> = states
         .iter()
-        .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap())
-        .unwrap()))
-    .abs();
-    let quantity_level_shift = max_quantity / 128f64;
-    let img = ImageBuffer::from_fn(HISTORY_SIZE as u32, HISTORY_SIZE as u32, |x, y| {
-        let x_data = prepared_data.get(x as usize).unwrap();
-        let y_data = x_data.get(y as usize).unwrap().to_owned();
-        let color = 127 + (y_data / quantity_level_shift).floor() as u8;
-        image::Luma([color])
-    });
-    let current_snapshot = order_book_snapshots.get(HISTORY_SIZE - 1).unwrap();
-    //let the best ask in the current snapshot be the current price
-    let current_price = current_snapshot.best_ask;
-    println!("current_price: {}", current_price);
-    // let the min best ask in the prediction head be the next price
-    let next_prices: Vec<f64> = (HISTORY_SIZE..HISTORY_SIZE + PREDICTION_HEAD)
-        .map(|x| -> f64 {
-            let snapshot = order_book_snapshots.get(x).unwrap();
-            snapshot.best_ask
+        .map(|x| {
+            x.1.iter().fold(
+                HashMap::new(),
+                |mut acc: HashMap<u32, f64>, a: &(String, f64)| -> HashMap<u32, f64> {
+                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
+                    *acc.entry(level).or_insert(0f64) += a.1;
+                    acc
+                },
+            )
         })
         .collect();
-    let next_price = next_prices
+    let filtered_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
+        .iter()
+        .enumerate()
+        .map(|(idx, s)| -> (Vec<(String, f64)>, Vec<(String, f64)>) {
+            let filtered_asks = s
+                .0
+                .iter()
+                .filter(|a| -> bool {
+                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
+                    let qty = ask_qts[idx].get(&level).unwrap();
+                    *qty > 0f64
+                })
+                .map(|x| x.to_owned())
+                .collect();
+            let filtered_bids = s
+                .1
+                .iter()
+                .filter(|a| -> bool {
+                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
+                    let qty = ask_qts[idx].get(&level).unwrap();
+                    *qty > 0f64
+                })
+                .map(|x| x.to_owned())
+                .collect();
+            (filtered_asks, filtered_bids)
+        })
+        .collect();
+    let new_max_price = get_max_price(filtered_states) + 0.000001;
+    let new_min_price = get_min_price(filtered_states);
+    if max_price != new_max_price || min_price != new_min_price {
+        denoise(filtered_states, new_max_price, new_min_price)
+    } else {
+        (ask_qts, bid_qts)
+    }
+}
+
+async fn create_input_image(states: &VecDeque<OrderBookState>) {
+    let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
+        .iter()
+        .map(|s| {
+            (
+                s.asks.into_iter().map(|a| (a.0, a.1)).collect(),
+                s.bids.into_iter().map(|b| (b.0, b.1)).collect(),
+            )
+        })
+        .collect();
+    let max_price = get_max_price(iterable_states) + 0.000001;
+    let min_price = get_min_price(iterable_states);
+    let (ask_qts, bid_qts) = denoise(iterable_states, max_price, min_price);
+
+    let qty_iter = ask_qts
+        .iter()
+        .chain(bid_qts.iter())
+        .map(|x| x.values().collect_vec())
+        .concat();
+    let max_qty = qty_iter
+        .iter()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .to_owned()
+        .to_owned()
+        + 0.000001;
+    let min_qty = qty_iter
         .iter()
         .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
+        .unwrap()
+        .to_owned()
+        .to_owned();
+    let quantity_level_shift = max_qty / 255f64;
+    let img = ImageBuffer::from_fn(HISTORY_SIZE as u32, HISTORY_SIZE as u32, |x, y| {
+        let r = (ask_qts[x as usize].get(&y).unwrap() / quantity_level_shift).round() as u8;
+        let g = (bid_qts[x as usize].get(&y).unwrap() / quantity_level_shift).round() as u8;
+        image::Rgb([r, g, 0])
+    });
+    let state = states.get(HISTORY_SIZE - 1).unwrap();
+
     println!("next price: {}", next_price);
     if let Some(label) = calc_label(current_price, *next_price) {
         let images_count = IMAGES_COUNT.fetch_add(1, Ordering::SeqCst);
