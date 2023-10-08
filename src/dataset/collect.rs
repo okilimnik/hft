@@ -24,6 +24,7 @@ const HISTORY_SIZE: usize = 60;
 const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
+const BTC_TRADING_AMOUNT: f64 = 0.02f64;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -194,6 +195,40 @@ fn denoise(
     }
 }
 
+fn get_current_price(state: &OrderBookState) -> String {
+    state
+        .bids
+        .iter()
+        .filter_map(|x| -> Option<&String> {
+            if *x.1 >= BTC_TRADING_AMOUNT {
+                Some(x.0)
+            } else {
+                None
+            }
+        })
+        .min()
+        .unwrap()
+        .to_owned()
+}
+
+fn get_next_price(states: Vec<&OrderBookState>) -> String {
+    states
+        .iter()
+        .map(|x| x.asks)
+        .concat()
+        .iter()
+        .filter_map(|x| -> Option<&String> {
+            if *x.1 >= BTC_TRADING_AMOUNT {
+                Some(x.0)
+            } else {
+                None
+            }
+        })
+        .max()
+        .unwrap()
+        .to_owned()
+}
+
 async fn create_input_image(states: &VecDeque<OrderBookState>) {
     let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
         .iter()
@@ -233,9 +268,13 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         image::Rgb([r, g, 0])
     });
     let state = states.get(HISTORY_SIZE - 1).unwrap();
-
+    let next_states = states
+        .range(HISTORY_SIZE..ORDER_BOOK_QUEUE_SIZE)
+        .collect_vec();
+    let current_price = get_current_price(state);
+    let next_price = get_next_price(next_states);
     println!("next price: {}", next_price);
-    if let Some(label) = calc_label(current_price, *next_price) {
+    if let Some(label) = calc_label(current_price, next_price) {
         let images_count = IMAGES_COUNT.fetch_add(1, Ordering::SeqCst);
         fs::create_dir_all("./dataset").unwrap();
         let filename = format!("{}_{}.png", label, images_count);
