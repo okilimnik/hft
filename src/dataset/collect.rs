@@ -58,31 +58,42 @@ async fn calc_new_state(event: DepthOrderBookEvent) {
     }
 }
 
+fn calc_change_level(current_price: f64, next_price: f64) -> i32 {
+    let shift = next_price - current_price;
+    let mut change_level = ((shift.abs() * 100.0) / (current_price * 0.025)).floor() as i32;
+    if change_level > 4 {
+        change_level = 4;
+    }
+    change_level
+}
+
 // we define price change levels by step of 0.025%
 // -0.1% -0.075% -0.05% -0.025% 0% 0.025% 0.05% 0.075% 0.1% becomes -4 -3 -2 -1 0 1 2 3 4
 // al levels that expands more than 4 level become 4 level
 // we don't want create images if price change is 0
-fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
-    let shift = next_price - current_price;
-    let mut change_level = ((shift.abs() * 100.0) / (current_price * 0.025)).floor() as i32;
-    if shift < 0f64 {
-        change_level = -change_level;
-    }
-    if change_level > 4 {
-        change_level = 4;
-    }
-    if change_level < -4 {
-        change_level = -4;
-    }
-    let label: String = (-4..5).fold("".to_string(), |acc: String, i: i32| -> String {
-        if i == 0 {
-            acc
-        } else if i == change_level {
+fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
+    let bullish_change_level = calc_change_level(bullish.0, bullish.1);
+    let bearish_change_level = calc_change_level(bearish.0, bearish.1);
+    let bullish_label: String = (1..5).fold("".to_string(), |acc: String, i: i32| -> String {
+        if i == bullish_change_level {
             format!("{acc}{}", "1")
         } else {
             format!("{acc}{}", "0")
         }
     });
+    let bearish_label: String =
+        (1..5)
+            .rev()
+            .fold("".to_string(), |acc: String, i: i32| -> String {
+                if i == bearish_change_level {
+                    format!("{acc}{}", "1")
+                } else {
+                    format!("{acc}{}", "0")
+                }
+            });
+    let mut label = "".to_string();
+    label.push_str(&bullish_label);
+    label.push_str(&bearish_label);
     println!("{}", label);
     if label == "00000000" {
         None
@@ -91,20 +102,34 @@ fn calc_label(current_price: f64, next_price: f64) -> Option<String> {
     }
 }
 
-fn get_max_price(states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)>) -> f64 {
+fn get_max_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
     states
         .iter()
-        .map(|x| x.0.iter().chain(x.1.iter()).max_by_key(|x| x.0).unwrap().0)
+        .map(|x| {
+            x.0.iter()
+                .chain(x.1.iter())
+                .max_by_key(|x| x.0.to_owned())
+                .unwrap()
+                .0
+                .to_owned()
+        })
         .max()
         .unwrap()
         .parse()
         .unwrap()
 }
 
-fn get_min_price(states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)>) -> f64 {
+fn get_min_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
     states
         .iter()
-        .map(|x| x.0.iter().chain(x.1.iter()).min_by_key(|x| x.0).unwrap().0)
+        .map(|x| {
+            x.0.iter()
+                .chain(x.1.iter())
+                .min_by_key(|x| x.0.to_owned())
+                .unwrap()
+                .0
+                .to_owned()
+        })
         .min()
         .unwrap()
         .parse()
@@ -186,8 +211,8 @@ fn denoise(
             (filtered_asks, filtered_bids)
         })
         .collect();
-    let new_max_price = get_max_price(filtered_states) + 0.000001;
-    let new_min_price = get_min_price(filtered_states);
+    let new_max_price = get_max_price(&filtered_states) + 0.000001;
+    let new_min_price = get_min_price(&filtered_states);
     if max_price != new_max_price || min_price != new_min_price {
         denoise(filtered_states, new_max_price, new_min_price)
     } else {
@@ -195,7 +220,7 @@ fn denoise(
     }
 }
 
-fn get_current_price(state: &OrderBookState) -> String {
+fn get_current_buy_price(state: &OrderBookState) -> String {
     state
         .bids
         .iter()
@@ -211,10 +236,26 @@ fn get_current_price(state: &OrderBookState) -> String {
         .to_owned()
 }
 
-fn get_next_price(states: Vec<&OrderBookState>) -> String {
+fn get_current_sell_price(state: &OrderBookState) -> String {
+    state
+        .asks
+        .iter()
+        .filter_map(|x| -> Option<&String> {
+            if *x.1 >= BTC_TRADING_AMOUNT {
+                Some(x.0)
+            } else {
+                None
+            }
+        })
+        .max()
+        .unwrap()
+        .to_owned()
+}
+
+fn get_next_sell_price(states: &[&OrderBookState]) -> String {
     states
         .iter()
-        .map(|x| x.asks)
+        .map(|x| x.asks.to_owned())
         .concat()
         .iter()
         .filter_map(|x| -> Option<&String> {
@@ -229,18 +270,42 @@ fn get_next_price(states: Vec<&OrderBookState>) -> String {
         .to_owned()
 }
 
+fn get_next_buy_price(states: &[&OrderBookState]) -> String {
+    states
+        .iter()
+        .map(|x| x.bids.to_owned())
+        .concat()
+        .iter()
+        .filter_map(|x| -> Option<&String> {
+            if *x.1 >= BTC_TRADING_AMOUNT {
+                Some(x.0)
+            } else {
+                None
+            }
+        })
+        .min()
+        .unwrap()
+        .to_owned()
+}
+
 async fn create_input_image(states: &VecDeque<OrderBookState>) {
     let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
         .iter()
         .map(|s| {
             (
-                s.asks.into_iter().map(|a| (a.0, a.1)).collect(),
-                s.bids.into_iter().map(|b| (b.0, b.1)).collect(),
+                s.asks
+                    .iter()
+                    .map(|a| (a.0.to_owned(), a.1.to_owned()))
+                    .collect(),
+                s.bids
+                    .iter()
+                    .map(|b| (b.0.to_owned(), b.1.to_owned()))
+                    .collect(),
             )
         })
         .collect();
-    let max_price = get_max_price(iterable_states) + 0.000001;
-    let min_price = get_min_price(iterable_states);
+    let max_price = get_max_price(&iterable_states) + 0.000001;
+    let min_price = get_min_price(&iterable_states);
     let (ask_qts, bid_qts) = denoise(iterable_states, max_price, min_price);
 
     let qty_iter = ask_qts
@@ -263,18 +328,25 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         .to_owned();
     let quantity_level_shift = max_qty / 255f64;
     let img = ImageBuffer::from_fn(HISTORY_SIZE as u32, HISTORY_SIZE as u32, |x, y| {
-        let r = (ask_qts[x as usize].get(&y).unwrap() / quantity_level_shift).round() as u8;
-        let g = (bid_qts[x as usize].get(&y).unwrap() / quantity_level_shift).round() as u8;
+        let r =
+            ((ask_qts[x as usize].get(&y).unwrap() - min_qty) / quantity_level_shift).round() as u8;
+        let g =
+            ((bid_qts[x as usize].get(&y).unwrap() - min_qty) / quantity_level_shift).round() as u8;
         image::Rgb([r, g, 0])
     });
     let state = states.get(HISTORY_SIZE - 1).unwrap();
     let next_states = states
         .range(HISTORY_SIZE..ORDER_BOOK_QUEUE_SIZE)
         .collect_vec();
-    let current_price = get_current_price(state);
-    let next_price = get_next_price(next_states);
-    println!("next price: {}", next_price);
-    if let Some(label) = calc_label(current_price, next_price) {
+    let current_sell_price = get_current_sell_price(state).parse().unwrap();
+    let next_buy_price = get_next_buy_price(&next_states).parse().unwrap();
+    let current_buy_price = get_current_buy_price(state).parse().unwrap();
+    let next_sell_price = get_next_sell_price(&next_states).parse().unwrap();
+
+    if let Some(label) = calc_label(
+        (current_buy_price, next_sell_price),
+        (current_sell_price, next_buy_price),
+    ) {
         let images_count = IMAGES_COUNT.fetch_add(1, Ordering::SeqCst);
         fs::create_dir_all("./dataset").unwrap();
         let filename = format!("{}_{}.png", label, images_count);
