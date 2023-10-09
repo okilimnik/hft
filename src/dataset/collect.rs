@@ -7,6 +7,7 @@ use binance::websockets::WebsocketEvent;
 use image::ImageBuffer;
 use itertools::Itertools;
 use lazy_static::lazy_static;
+use log::{debug, error, info};
 use merge_hashmap::Merge;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -25,6 +26,7 @@ const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
 const BTC_TRADING_AMOUNT: f64 = 0.02f64;
+const DENOISING_QTY_THRESHOLD: f64 = 50f64;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -68,7 +70,7 @@ fn calc_change_level(current_price: f64, next_price: f64) -> i32 {
 }
 
 // we define price change levels by step of 0.025%
-// -0.1% -0.075% -0.05% -0.025% 0% 0.025% 0.05% 0.075% 0.1% becomes -4 -3 -2 -1 0 1 2 3 4
+// -0.16% -0.12% -0.08% -0.04% 0% 0.04% 0.08% 0.12% 0.16% becomes -4 -3 -2 -1 0 1 2 3 4
 // al levels that expands more than 4 level become 4 level
 // we don't want create images if price change is 0
 fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
@@ -94,7 +96,6 @@ fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
     let mut label = "".to_string();
     label.push_str(&bullish_label);
     label.push_str(&bearish_label);
-    println!("{}", label);
     if label == "00000000" {
         None
     } else {
@@ -134,22 +135,6 @@ fn get_min_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
         .unwrap()
         .parse()
         .unwrap()
-}
-
-fn get_acc_quantity(
-    prices: Vec<&(f64, f64, bool)>,
-    price_level_shift: f64,
-    min_price: f64,
-    level: usize,
-) -> f64 {
-    prices.iter().fold(0f64, |acc, price| -> f64 {
-        let price_level = ((price.0 - min_price) / price_level_shift).floor() as u32;
-        if price_level == level as u32 {
-            acc + price.1
-        } else {
-            acc
-        }
-    })
 }
 
 fn denoise(
@@ -194,7 +179,7 @@ fn denoise(
                 .filter(|a| -> bool {
                     let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
                     let qty = ask_qts[idx].get(&level).unwrap();
-                    *qty > 0f64
+                    *qty > DENOISING_QTY_THRESHOLD
                 })
                 .map(|x| x.to_owned())
                 .collect();
@@ -203,8 +188,8 @@ fn denoise(
                 .iter()
                 .filter(|a| -> bool {
                     let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
-                    let qty = ask_qts[idx].get(&level).unwrap();
-                    *qty > 0f64
+                    let qty = bid_qts[idx].get(&level).unwrap();
+                    *qty > DENOISING_QTY_THRESHOLD
                 })
                 .map(|x| x.to_owned())
                 .collect();
@@ -328,10 +313,14 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         .to_owned();
     let quantity_level_shift = max_qty / 255f64;
     let img = ImageBuffer::from_fn(HISTORY_SIZE as u32, HISTORY_SIZE as u32, |x, y| {
-        let r =
-            ((ask_qts[x as usize].get(&y).unwrap() - min_qty) / quantity_level_shift).round() as u8;
-        let g =
-            ((bid_qts[x as usize].get(&y).unwrap() - min_qty) / quantity_level_shift).round() as u8;
+        let mut r = 0;
+        if let Some(ask_qty) = ask_qts[x as usize].get(&y) {
+            r = ((ask_qty - min_qty) / quantity_level_shift).round() as u8;
+        }
+        let mut g = 0;
+        if let Some(bid_qty) = bid_qts[x as usize].get(&y) {
+            g = ((bid_qty - min_qty) / quantity_level_shift).round() as u8;
+        }
         image::Rgb([r, g, 0])
     });
     let state = states.get(HISTORY_SIZE - 1).unwrap();
@@ -351,17 +340,20 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         fs::create_dir_all("./dataset").unwrap();
         let filename = format!("{}_{}.png", label, images_count);
         let filepath = format!("./dataset/{}", filename);
-        tokio::spawn(async move {
-            if let Err(e) = img.save(filepath.clone()) {
-                eprintln!("Cannot save dataset image on disk: {}", e);
-            }
+        if let Err(e) = img.save(filepath.clone()) {
+            eprintln!("Cannot save dataset image on disk: {}", e);
+        };
+        debug!("Saved image {}", filename);
+
+        /*tokio::spawn(async move {
+
             if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
                 eprintln!("Cannot save dataset file in cloud: {}", e);
             }
             if let Err(e) = fs::remove_file(filepath) {
                 eprintln!("Cannot remove dataset file after saving in cloud: {}", e);
             }
-        });
+        });*/
     }
 }
 

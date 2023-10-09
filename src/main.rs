@@ -15,6 +15,7 @@ struct Args {
 #[tokio::main]
 async fn main() {
     dotenv().ok();
+    env_logger::init();
     let args = Args::parse();
 
     match args.task.as_str() {

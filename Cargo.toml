@@ -20,3 +20,5 @@ clap = { version = "4.4.4", features = ["derive"] }
 dotenv = "0.15.0"
 rand = "0.8.5"
 merge-hashmap = "0.1.2"
+env_logger = "0.10.0"
+log = "0.4.20"
