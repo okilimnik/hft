@@ -4,6 +4,8 @@ use binance::market::*;
 use binance::model::DepthOrderBookEvent;
 use binance::websockets::WebSockets;
 use binance::websockets::WebsocketEvent;
+use image::imageops::rotate180_in_place;
+use image::io::Reader as ImageReader;
 use image::ImageBuffer;
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -27,6 +29,7 @@ const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
 const BTC_TRADING_AMOUNT: f64 = 0.02f64;
 const DENOISING_QTY_THRESHOLD: f64 = 1.0;
+const LEVEL_PRICE_CHANGE_PERCENT: f64 = 0.025;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -62,20 +65,30 @@ async fn calc_new_state(event: DepthOrderBookEvent) {
 
 fn calc_change_level(current_price: f64, next_price: f64) -> i32 {
     let shift = next_price - current_price;
-    let mut change_level = ((shift.abs() * 100.0) / (current_price * 0.025)).floor() as i32;
+    let mut change_level =
+        ((shift.abs() * 100.0) / (current_price * LEVEL_PRICE_CHANGE_PERCENT)).floor() as i32;
     if change_level > 4 {
         change_level = 4;
     }
     change_level
 }
 
-// we define price change levels by step of 0.025%
-// -0.16% -0.12% -0.08% -0.04% 0% 0.04% 0.08% 0.12% 0.16% becomes -4 -3 -2 -1 0 1 2 3 4
+// we define price change levels by step of LEVEL_PRICE_CHANGE_PERCENT
 // al levels that expands more than 4 level become 4 level
 // we don't want create images if price change is 0
 fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
-    let bullish_change_level = calc_change_level(bullish.0, bullish.1);
-    let bearish_change_level = calc_change_level(bearish.0, bearish.1);
+    let mut bullish_change_level = 0;
+    let mut bearish_change_level = 0;
+    if bullish.1 > bullish.0 {
+        bullish_change_level = calc_change_level(bullish.0, bullish.1);
+    }
+    if bearish.1 < bearish.0 {
+        bearish_change_level = calc_change_level(bearish.0, bearish.1);
+    }
+    if bullish_change_level == bearish_change_level {
+        bullish_change_level = 0;
+        bearish_change_level = 0;
+    }
     let bullish_label: String = (1..5).fold("".to_string(), |acc: String, i: i32| -> String {
         if i == bullish_change_level {
             format!("{acc}{}", "1")
@@ -273,6 +286,15 @@ fn get_next_buy_price(states: &[&OrderBookState]) -> String {
         .to_owned()
 }
 
+fn rotate_image(filename: String, new_filename: String) {
+    let mut img = ImageReader::open(format!("./{}", filename))
+        .unwrap()
+        .decode()
+        .unwrap();
+    rotate180_in_place(&mut img);
+    img.save(format!("./{}", new_filename)).unwrap();
+}
+
 async fn create_input_image(states: &VecDeque<OrderBookState>) {
     let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
         .par_iter()
@@ -347,12 +369,12 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
             if let Err(e) = img.save(filepath.clone()) {
                 error!("Cannot save dataset image on disk: {}", e);
             };
-            /*  if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
+            if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
                 error!("Cannot save dataset file in cloud: {}", e);
             }
             if let Err(e) = fs::remove_file(filepath) {
                 error!("Cannot remove dataset file after saving in cloud: {}", e);
-            }*/
+            }
         });
     }
 }
