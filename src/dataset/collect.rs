@@ -12,11 +12,11 @@ use merge_hashmap::Merge;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+
 use tokio::task;
-use tungstenite::Message;
 
 use crate::dataset::order_book::OrderBookState;
 
@@ -26,7 +26,7 @@ const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
 const BTC_TRADING_AMOUNT: f64 = 0.02f64;
-const DENOISING_QTY_THRESHOLD: f64 = 50f64;
+const DENOISING_QTY_THRESHOLD: f64 = 1.0;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -340,24 +340,25 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         fs::create_dir_all("./dataset").unwrap();
         let filename = format!("{}_{}.png", label, images_count);
         let filepath = format!("./dataset/{}", filename);
-        if let Err(e) = img.save(filepath.clone()) {
-            eprintln!("Cannot save dataset image on disk: {}", e);
-        };
+
         debug!("Saved image {}", filename);
 
-        /*tokio::spawn(async move {
-
-            if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
-                eprintln!("Cannot save dataset file in cloud: {}", e);
+        tokio::spawn(async move {
+            if let Err(e) = img.save(filepath.clone()) {
+                error!("Cannot save dataset image on disk: {}", e);
+            };
+            /*  if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
+                error!("Cannot save dataset file in cloud: {}", e);
             }
             if let Err(e) = fs::remove_file(filepath) {
-                eprintln!("Cannot remove dataset file after saving in cloud: {}", e);
-            }
-        });*/
+                error!("Cannot remove dataset file after saving in cloud: {}", e);
+            }*/
+        });
     }
 }
 
 pub async fn from_binance_data() {
+    let keep_running = AtomicBool::new(true);
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         if let WebsocketEvent::DepthOrderBook(event) = event {
             tokio::spawn(async move {
@@ -369,24 +370,9 @@ pub async fn from_binance_data() {
     web_socket
         .connect(&format!("{}@depth", SYMBOL.to_lowercase()))
         .expect("Cannot connect to ws streams");
-    loop {
-        if let Some(ref mut socket) = web_socket.socket {
-            let message = socket.0.read_message().unwrap();
-            match message {
-                Message::Text(msg) => {
-                    if let Err(e) = web_socket.handle_msg(&msg) {
-                        println!("Error on handling stream message: {:?}", e);
-                    }
-                }
-                Message::Ping(_) => {
-                    socket.0.write_message(Message::Pong(vec![])).unwrap();
-                }
-                Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => (),
-                Message::Close(e) => println!("Disconnected {:?}", e),
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+    if let Err(e) = web_socket.event_loop(&keep_running) {
+        error!("Error: {:?}", e);
+    };
 }
 
 #[test]
