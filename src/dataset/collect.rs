@@ -21,8 +21,7 @@ use std::sync::atomic::Ordering;
 use tokio::task;
 
 // TODO:
-// 1. try Arc<T>, instead of Vec<T>
-// 2. rotate bearish so input is bullish;
+// 1. rotate bearish so input is bullish;
 
 use crate::dataset::order_book::OrderBookState;
 
@@ -155,7 +154,7 @@ fn get_min_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
 }
 
 fn denoise(
-    states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)>,
+    states: &[(Vec<(String, f64)>, Vec<(String, f64)>)],
     max_price: f64,
     min_price: f64,
 ) -> (Vec<HashMap<u32, f64>>, Vec<HashMap<u32, f64>>) {
@@ -216,7 +215,7 @@ fn denoise(
     let new_max_price = get_max_price(&filtered_states) + 0.000001;
     let new_min_price = get_min_price(&filtered_states);
     if max_price != new_max_price || min_price != new_min_price {
-        denoise(filtered_states, new_max_price, new_min_price)
+        denoise(&filtered_states, new_max_price, new_min_price)
     } else {
         (ask_qts, bid_qts)
     }
@@ -317,7 +316,7 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         .collect();
     let max_price = get_max_price(&iterable_states) + 0.000001;
     let min_price = get_min_price(&iterable_states);
-    let (ask_qts, bid_qts) = denoise(iterable_states, max_price, min_price);
+    let (ask_qts, bid_qts) = denoise(&iterable_states, max_price, min_price);
 
     let qty_iter = ask_qts
         .iter()
