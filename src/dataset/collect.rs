@@ -11,7 +11,6 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use merge_hashmap::Merge;
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs;
@@ -121,7 +120,7 @@ fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
 
 fn get_max_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
     states
-        .par_iter()
+        .iter()
         .map(|x| {
             x.0.iter()
                 .chain(x.1.iter())
@@ -138,7 +137,7 @@ fn get_max_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
 
 fn get_min_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
     states
-        .par_iter()
+        .iter()
         .map(|x| {
             x.0.iter()
                 .chain(x.1.iter())
@@ -160,7 +159,7 @@ fn denoise(
 ) -> (Vec<HashMap<u32, f64>>, Vec<HashMap<u32, f64>>) {
     let shift = (max_price - min_price) / HISTORY_SIZE as f64;
     let ask_qts: Vec<HashMap<u32, f64>> = states
-        .par_iter()
+        .iter()
         .map(|x| {
             x.0.iter().fold(
                 HashMap::new(),
@@ -173,7 +172,7 @@ fn denoise(
         })
         .collect();
     let bid_qts: Vec<HashMap<u32, f64>> = states
-        .par_iter()
+        .iter()
         .map(|x| {
             x.1.iter().fold(
                 HashMap::new(),
@@ -186,7 +185,7 @@ fn denoise(
         })
         .collect();
     let filtered_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
-        .par_iter()
+        .iter()
         .enumerate()
         .map(|(idx, s)| -> (Vec<(String, f64)>, Vec<(String, f64)>) {
             let filtered_asks = s
@@ -224,7 +223,7 @@ fn denoise(
 fn get_current_buy_price(state: &OrderBookState) -> String {
     state
         .asks
-        .par_iter()
+        .iter()
         .filter_map(|x| -> Option<&String> {
             if *x.1 >= BTC_TRADING_AMOUNT {
                 Some(x.0)
@@ -240,7 +239,7 @@ fn get_current_buy_price(state: &OrderBookState) -> String {
 fn get_current_sell_price(state: &OrderBookState) -> String {
     state
         .bids
-        .par_iter()
+        .iter()
         .filter_map(|x| -> Option<&String> {
             if *x.1 >= BTC_TRADING_AMOUNT {
                 Some(x.0)
@@ -258,7 +257,7 @@ fn get_next_sell_price(states: &[&OrderBookState]) -> String {
         .iter()
         .map(|x| x.bids.to_owned())
         .concat()
-        .par_iter()
+        .iter()
         .filter_map(|x| -> Option<&String> {
             if *x.1 >= BTC_TRADING_AMOUNT {
                 Some(x.0)
@@ -300,7 +299,7 @@ fn rotate_image(filename: String, new_filename: String) {
 
 async fn create_input_image(states: &VecDeque<OrderBookState>) {
     let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
-        .par_iter()
+        .iter()
         .map(|s| {
             (
                 s.asks
@@ -324,14 +323,14 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         .map(|x| x.values().collect_vec())
         .concat();
     let max_qty = qty_iter
-        .par_iter()
+        .iter()
         .max_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap()
         .to_owned()
         .to_owned()
         + 0.000001;
     let min_qty = qty_iter
-        .par_iter()
+        .iter()
         .min_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap()
         .to_owned()

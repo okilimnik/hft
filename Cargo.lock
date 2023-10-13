@@ -1140,7 +1140,6 @@ dependencies = [
  "log",
  "merge-hashmap",
  "rand",
- "rayon",
  "serde",
  "serde_json",
  "tokio",
