@@ -20,6 +20,10 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tokio::task;
 
+// TODO:
+// 1. try Arc<T>, instead of Vec<T>
+// 2. rotate bearish so input is bullish;
+
 use crate::dataset::order_book::OrderBookState;
 
 const SYMBOL: &str = "BTCTUSD";
@@ -29,7 +33,7 @@ const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 static IMAGES_COUNT: AtomicUsize = AtomicUsize::new(0);
 const BTC_TRADING_AMOUNT: f64 = 0.02f64;
 const DENOISING_QTY_THRESHOLD: f64 = 1.0;
-const LEVEL_PRICE_CHANGE_PERCENT: f64 = 0.025;
+const LEVEL_PRICE_CHANGE_PERCENT: f64 = 0.04;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -107,8 +111,8 @@ fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
                 }
             });
     let mut label = "".to_string();
-    label.push_str(&bullish_label);
     label.push_str(&bearish_label);
+    label.push_str(&bullish_label);
     if label == "00000000" {
         None
     } else {
@@ -220,7 +224,7 @@ fn denoise(
 
 fn get_current_buy_price(state: &OrderBookState) -> String {
     state
-        .bids
+        .asks
         .par_iter()
         .filter_map(|x| -> Option<&String> {
             if *x.1 >= BTC_TRADING_AMOUNT {
@@ -236,7 +240,7 @@ fn get_current_buy_price(state: &OrderBookState) -> String {
 
 fn get_current_sell_price(state: &OrderBookState) -> String {
     state
-        .asks
+        .bids
         .par_iter()
         .filter_map(|x| -> Option<&String> {
             if *x.1 >= BTC_TRADING_AMOUNT {
@@ -253,7 +257,7 @@ fn get_current_sell_price(state: &OrderBookState) -> String {
 fn get_next_sell_price(states: &[&OrderBookState]) -> String {
     states
         .iter()
-        .map(|x| x.asks.to_owned())
+        .map(|x| x.bids.to_owned())
         .concat()
         .par_iter()
         .filter_map(|x| -> Option<&String> {
@@ -271,7 +275,7 @@ fn get_next_sell_price(states: &[&OrderBookState]) -> String {
 fn get_next_buy_price(states: &[&OrderBookState]) -> String {
     states
         .iter()
-        .map(|x| x.bids.to_owned())
+        .map(|x| x.asks.to_owned())
         .concat()
         .iter()
         .filter_map(|x| -> Option<&String> {
@@ -362,8 +366,6 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         fs::create_dir_all("./dataset").unwrap();
         let filename = format!("{}_{}.png", label, images_count);
         let filepath = format!("./dataset/{}", filename);
-
-        debug!("Saved image {}", filename);
 
         tokio::spawn(async move {
             if let Err(e) = img.save(filepath.clone()) {
