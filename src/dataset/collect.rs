@@ -17,7 +17,7 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use tokio::task;
+use std::sync::Mutex;
 
 // TODO:
 // 1. rotate bearish so input is bullish;
@@ -35,20 +35,15 @@ const LEVEL_PRICE_CHANGE_PERCENT: f64 = 0.04;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
-    static ref ORDER_BOOK: tokio::sync::Mutex<VecDeque<OrderBookState>> =
-        tokio::sync::Mutex::new(VecDeque::new());
+    static ref ORDER_BOOK: Mutex<VecDeque<OrderBookState>> = Mutex::new(VecDeque::new());
 }
 
-async fn calc_new_state(event: DepthOrderBookEvent) {
-    let mut order_book_state_series = ORDER_BOOK.lock().await;
+fn calc_new_state(event: DepthOrderBookEvent) {
+    let mut order_book_state_series = ORDER_BOOK.lock().unwrap();
     if order_book_state_series.is_empty() {
-        let new_order_book = task::spawn_blocking(move || {
-            MARKET
-                .get_custom_depth(SYMBOL, 5000)
-                .expect("Failed to get initial order book.")
-        })
-        .await
-        .unwrap();
+        let new_order_book = MARKET
+            .get_custom_depth(SYMBOL, 5000)
+            .expect("Failed to get initial order book.");
         order_book_state_series.push_back(OrderBookState::from1(new_order_book));
     };
     let mut new_order_book = order_book_state_series.back().unwrap().clone();
@@ -61,7 +56,7 @@ async fn calc_new_state(event: DepthOrderBookEvent) {
         order_book_state_series.pop_front();
     }
     if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-        create_input_image(&order_book_state_series).await;
+        create_input_image(&order_book_state_series);
     }
 }
 
@@ -297,7 +292,7 @@ fn rotate_image(filename: String, new_filename: String) {
     img.save(format!("./{}", new_filename)).unwrap();
 }
 
-async fn create_input_image(states: &VecDeque<OrderBookState>) {
+fn create_input_image(states: &VecDeque<OrderBookState>) {
     let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
         .iter()
         .map(|s| {
@@ -364,11 +359,11 @@ async fn create_input_image(states: &VecDeque<OrderBookState>) {
         fs::create_dir_all("./dataset").unwrap();
         let filename = format!("{}_{}.png", label, images_count);
         let filepath = format!("./dataset/{}", filename);
+        if let Err(e) = img.save(filepath.clone()) {
+            error!("Cannot save dataset image on disk: {}", e);
+        };
 
         tokio::spawn(async move {
-            if let Err(e) = img.save(filepath.clone()) {
-                error!("Cannot save dataset image on disk: {}", e);
-            };
             if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
                 error!("Cannot save dataset file in cloud: {}", e);
             }
@@ -383,8 +378,8 @@ pub async fn from_binance_data() {
     let keep_running = AtomicBool::new(true);
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         if let WebsocketEvent::DepthOrderBook(event) = event {
-            tokio::spawn(async move {
-                calc_new_state(event).await;
+            rayon::spawn(move || {
+                calc_new_state(event);
             });
         }
         Ok(())

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "rt-multi-thread", "rt"] }
 tokio-cron-scheduler = "0.9.4"
 binance = { git = "https://github.com/okilimnik/binance-rs.git", rev = "e5ea49c" }
 serde_json = "1.0.105"
@@ -21,3 +21,4 @@ rand = "0.8.5"
 merge-hashmap = "0.1.2"
 env_logger = "0.10.0"
 log = "0.4.20"
+rayon = "1.8.0"

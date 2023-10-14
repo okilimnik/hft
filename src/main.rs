@@ -12,7 +12,7 @@ struct Args {
     task: String,
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main]
 async fn main() {
     dotenv().ok();
     env_logger::init();
