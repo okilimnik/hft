@@ -1,24 +1,23 @@
 use cloud_storage::{object::ObjectList, Client, Error, ListRequest, Object};
-use futures::{Stream, TryStreamExt};
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use std::{collections::HashMap, fs::File, io::Read, sync::Mutex};
+use std::{collections::HashMap, fs::File, io::Read};
+use tokio::runtime::Runtime;
 
 lazy_static! {
-    static ref STORAGE: Mutex<Client> = Mutex::new(Client::default());
+    static ref STORAGE: Client = Client::default();
+    static ref RUNTIME: Runtime = tokio::runtime::Runtime::new().unwrap();
 }
 
 pub fn create_file(filename: String, filepath: String) -> Result<(), Error> {
-    let client = STORAGE.lock().unwrap();
     let mut bytes: Vec<u8> = Vec::new();
     for byte in File::open(&filepath)?.bytes() {
         bytes.push(byte?)
     }
     let mut prefixed_path = "order_book_images/".to_string();
     prefixed_path.push_str(&filename);
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let object = client.object();
-    rt.block_on(async {
+    let object = STORAGE.object();
+    RUNTIME.block_on(async {
         let _ = object
             .create("neusa-datasets", bytes, &prefixed_path, "image/png")
             .await

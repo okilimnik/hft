@@ -56,7 +56,13 @@ fn calc_new_state(event: DepthOrderBookEvent) {
         order_book_state_series.pop_front();
     }
     if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-        create_input_image(&order_book_state_series);
+        let snapshot = order_book_state_series
+            .iter()
+            .map(|x| x.to_owned())
+            .collect_vec();
+        rayon::spawn(move || {
+            create_input_image(snapshot);
+        });
     }
 }
 
@@ -247,7 +253,7 @@ fn get_current_sell_price(state: &OrderBookState) -> String {
         .to_owned()
 }
 
-fn get_next_sell_price(states: &[&OrderBookState]) -> String {
+fn get_next_sell_price(states: &[OrderBookState]) -> String {
     states
         .iter()
         .map(|x| x.bids.to_owned())
@@ -265,7 +271,7 @@ fn get_next_sell_price(states: &[&OrderBookState]) -> String {
         .to_owned()
 }
 
-fn get_next_buy_price(states: &[&OrderBookState]) -> String {
+fn get_next_buy_price(states: &[OrderBookState]) -> String {
     states
         .iter()
         .map(|x| x.asks.to_owned())
@@ -292,7 +298,7 @@ fn rotate_image(filename: String, new_filename: String) {
     img.save(format!("./{}", new_filename)).unwrap();
 }
 
-fn create_input_image(states: &VecDeque<OrderBookState>) {
+fn create_input_image(states: Vec<OrderBookState>) {
     let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
         .iter()
         .map(|s| {
@@ -343,13 +349,11 @@ fn create_input_image(states: &VecDeque<OrderBookState>) {
         image::Rgb([r, g, 0])
     });
     let state = states.get(HISTORY_SIZE - 1).unwrap();
-    let next_states = states
-        .range(HISTORY_SIZE..ORDER_BOOK_QUEUE_SIZE)
-        .collect_vec();
+    let next_states = states.get(HISTORY_SIZE..ORDER_BOOK_QUEUE_SIZE).unwrap();
     let current_sell_price = get_current_sell_price(state).parse().unwrap();
-    let next_buy_price = get_next_buy_price(&next_states).parse().unwrap();
+    let next_buy_price = get_next_buy_price(next_states).parse().unwrap();
     let current_buy_price = get_current_buy_price(state).parse().unwrap();
-    let next_sell_price = get_next_sell_price(&next_states).parse().unwrap();
+    let next_sell_price = get_next_sell_price(next_states).parse().unwrap();
 
     if let Some(label) = calc_label(
         (current_buy_price, next_sell_price),
@@ -375,9 +379,7 @@ pub fn from_binance_data() {
     let keep_running = AtomicBool::new(true);
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         if let WebsocketEvent::DepthOrderBook(event) = event {
-            rayon::spawn(move || {
-                calc_new_state(event);
-            });
+            calc_new_state(event);
         }
         Ok(())
     });
