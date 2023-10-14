@@ -2,33 +2,36 @@ use cloud_storage::{object::ObjectList, Client, Error, ListRequest, Object};
 use futures::{Stream, TryStreamExt};
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use std::{collections::HashMap, fs::File, io::Read};
-use tokio::sync;
+use std::{collections::HashMap, fs::File, io::Read, sync::Mutex};
 
 lazy_static! {
-    static ref STORAGE: sync::Mutex<Client> = sync::Mutex::new(Client::default());
+    static ref STORAGE: Mutex<Client> = Mutex::new(Client::default());
 }
 
-pub async fn create_file(filename: String, filepath: String) -> Result<(), Error> {
-    let client = STORAGE.lock().await;
+pub fn create_file(filename: String, filepath: String) -> Result<(), Error> {
+    let client = STORAGE.lock().unwrap();
     let mut bytes: Vec<u8> = Vec::new();
     for byte in File::open(&filepath)?.bytes() {
         bytes.push(byte?)
     }
     let mut prefixed_path = "order_book_images/".to_string();
     prefixed_path.push_str(&filename);
-    let _ = client
-        .object()
-        .create("neusa-datasets", bytes, &prefixed_path, "image/png")
-        .await
-        .unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let object = client.object();
+    rt.block_on(async {
+        let _ = object
+            .create("neusa-datasets", bytes, &prefixed_path, "image/png")
+            .await
+            .unwrap();
+    });
     Ok(())
 }
 
-pub async fn list_files_by_categories() -> HashMap<String, Vec<String>> {
+/*
+pub fn list_files_by_categories() -> HashMap<String, Vec<String>> {
     STORAGE
         .lock()
-        .await
+        .unwrap()
         .object()
         .list("neusa-datasets", ListRequest::default())
         .await
@@ -52,3 +55,5 @@ pub async fn list_files_by_categories() -> HashMap<String, Vec<String>> {
         .await
         .unwrap()
 }
+
+*/

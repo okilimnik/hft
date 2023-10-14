@@ -12,14 +12,13 @@ struct Args {
     task: String,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     dotenv().ok();
     env_logger::init();
     let args = Args::parse();
 
     match args.task.as_str() {
-        "collect" => dataset::collect::from_binance_data().await,
+        "collect" => dataset::collect::from_binance_data(),
         _ => print!("No task, exiting..."),
     };
 }

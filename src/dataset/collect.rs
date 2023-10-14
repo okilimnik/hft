@@ -362,19 +362,16 @@ fn create_input_image(states: &VecDeque<OrderBookState>) {
         if let Err(e) = img.save(filepath.clone()) {
             error!("Cannot save dataset image on disk: {}", e);
         };
-
-        tokio::spawn(async move {
-            if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()).await {
-                error!("Cannot save dataset file in cloud: {}", e);
-            }
-            if let Err(e) = fs::remove_file(filepath) {
-                error!("Cannot remove dataset file after saving in cloud: {}", e);
-            }
-        });
+        if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()) {
+            error!("Cannot save dataset file in cloud: {}", e);
+        }
+        if let Err(e) = fs::remove_file(filepath) {
+            error!("Cannot remove dataset file after saving in cloud: {}", e);
+        }
     }
 }
 
-pub async fn from_binance_data() {
+pub fn from_binance_data() {
     let keep_running = AtomicBool::new(true);
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         if let WebsocketEvent::DepthOrderBook(event) = event {
