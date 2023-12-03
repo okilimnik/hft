@@ -30,4 +30,4 @@ CMD RUST_LOG=debug /usr/local/bin/neusa --task collect
 # docker push asia-northeast1-docker.pkg.dev/neusa-a919b/neusa/neusa-hft
 # docker run -it --rm --name neusatest neusa
 
-# RUST_LOG=debug cargo run -- --task collect
+# RUST_LOG=debug target/release/neusa --task collect

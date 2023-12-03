@@ -1,12 +1,12 @@
 use cloud_storage::{object::ObjectList, Client, Error, ListRequest, Object};
+use futures::executor::block_on;
 use itertools::Itertools;
 use lazy_static::lazy_static;
+use std::time::Instant;
 use std::{collections::HashMap, fs::File, io::Read};
-use tokio::runtime::Runtime;
 
 lazy_static! {
     static ref STORAGE: Client = Client::default();
-    static ref RUNTIME: Runtime = tokio::runtime::Runtime::new().unwrap();
 }
 
 pub fn create_file(filename: String, filepath: String) -> Result<(), Error> {
@@ -14,15 +14,11 @@ pub fn create_file(filename: String, filepath: String) -> Result<(), Error> {
     for byte in File::open(&filepath)?.bytes() {
         bytes.push(byte?)
     }
-    let mut prefixed_path = "order_book_images/".to_string();
+    let mut prefixed_path = format!("order_book8/{:?}/", Instant::now().elapsed().as_millis());
     prefixed_path.push_str(&filename);
     let object = STORAGE.object();
-    RUNTIME.block_on(async {
-        let _ = object
-            .create("neusa-datasets", bytes, &prefixed_path, "image/png")
-            .await
-            .unwrap();
-    });
+    let create_object = object.create("neusa-datasets", bytes, &prefixed_path, "image/png");
+    let _ = block_on(create_object);
     Ok(())
 }
 

@@ -22,3 +22,13 @@ fn main() {
         _ => print!("No task, exiting..."),
     };
 }
+/*
+slint::slint! {
+    export component MainWindow inherits Window {
+        Text {
+            text: "hello world";
+            color: green;
+        }
+    }
+}
+*/

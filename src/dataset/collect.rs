@@ -10,14 +10,16 @@ use image::ImageBuffer;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
-use merge_hashmap::Merge;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::Mutex;
+use std::thread;
+use std::time::{Duration, Instant};
 
 // TODO:
 // 1. rotate bearish so input is bullish;
@@ -35,7 +37,19 @@ const LEVEL_PRICE_CHANGE_PERCENT: f64 = 0.04;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
-    static ref ORDER_BOOK: Mutex<VecDeque<OrderBookState>> = Mutex::new(VecDeque::new());
+    static ref ORDER_BOOK: Arc<Mutex<VecDeque<OrderBookState>>> =
+        Arc::new(Mutex::new(VecDeque::new()));
+}
+
+fn create_input(snapshot: &[OrderBookState]) {
+    let start = Instant::now();
+    let result = create_input_image(snapshot);
+    let duration = start.elapsed();
+    debug!("create_input_image took: {:?}", duration.as_millis());
+    if let Some((filename, filepath)) = result {
+        let _ = gcp::create_file(filename.clone(), filepath.clone());
+        fs::remove_file(filepath).unwrap();
+    }
 }
 
 fn calc_new_state(event: DepthOrderBookEvent) {
@@ -44,25 +58,26 @@ fn calc_new_state(event: DepthOrderBookEvent) {
         let new_order_book = MARKET
             .get_custom_depth(SYMBOL, 5000)
             .expect("Failed to get initial order book.");
-        order_book_state_series.push_back(OrderBookState::from1(new_order_book));
+        order_book_state_series.push_back(OrderBookState::from(
+            new_order_book.last_update_id,
+            new_order_book.bids,
+            new_order_book.asks,
+        ));
     };
-    let mut new_order_book = order_book_state_series.back().unwrap().clone();
+    let mut new_order_book = order_book_state_series
+        .back()
+        .expect("Cannot get last item in states")
+        .clone();
     if event.final_update_id > new_order_book.last_update_id {
-        new_order_book.merge(OrderBookState::from2(event));
-        new_order_book.filter();
+        new_order_book.merge(OrderBookState::from(
+            event.final_update_id,
+            event.bids,
+            event.asks,
+        ));
         order_book_state_series.push_back(new_order_book);
     }
     if order_book_state_series.len() > ORDER_BOOK_QUEUE_SIZE {
         order_book_state_series.pop_front();
-    }
-    if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-        let snapshot = order_book_state_series
-            .iter()
-            .map(|x| x.to_owned())
-            .collect_vec();
-        rayon::spawn(move || {
-            create_input_image(snapshot);
-        });
     }
 }
 
@@ -112,6 +127,7 @@ fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
     let mut label = "".to_string();
     label.push_str(&bearish_label);
     label.push_str(&bullish_label);
+
     if label == "00000000" {
         None
     } else {
@@ -119,105 +135,142 @@ fn calc_label(bullish: (f64, f64), bearish: (f64, f64)) -> Option<String> {
     }
 }
 
-fn get_max_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
+fn get_max_price(states: &[OrderBookState]) -> f64 {
     states
         .iter()
         .map(|x| {
-            x.0.iter()
-                .chain(x.1.iter())
+            x.bids
+                .iter()
+                .chain(x.asks.iter())
                 .max_by_key(|x| x.0.to_owned())
-                .unwrap()
+                .expect("Cannot iter through state to get max price")
                 .0
                 .to_owned()
         })
         .max()
-        .unwrap()
+        .expect("Cannot get max price string")
         .parse()
-        .unwrap()
+        .expect("Cannot convert max string price into f64")
 }
 
-fn get_min_price(states: &[(Vec<(String, f64)>, Vec<(String, f64)>)]) -> f64 {
+fn get_min_price(states: &[OrderBookState]) -> f64 {
     states
         .iter()
         .map(|x| {
-            x.0.iter()
-                .chain(x.1.iter())
+            x.bids
+                .iter()
+                .chain(x.asks.iter())
                 .min_by_key(|x| x.0.to_owned())
-                .unwrap()
+                .expect("Cannot iter through state to get min price")
                 .0
                 .to_owned()
         })
         .min()
-        .unwrap()
+        .expect("Cannot get min price string")
         .parse()
-        .unwrap()
+        .expect("Cannot convert min string price into f6")
 }
 
 fn denoise(
-    states: &[(Vec<(String, f64)>, Vec<(String, f64)>)],
+    states: &[OrderBookState],
     max_price: f64,
     min_price: f64,
-) -> (Vec<HashMap<u32, f64>>, Vec<HashMap<u32, f64>>) {
+) -> (Vec<FxHashMap<u32, f64>>, Vec<FxHashMap<u32, f64>>) {
     let shift = (max_price - min_price) / HISTORY_SIZE as f64;
-    let ask_qts: Vec<HashMap<u32, f64>> = states
+    let bids_qts: Vec<FxHashMap<u32, f64>> = states
         .iter()
         .map(|x| {
-            x.0.iter().fold(
-                HashMap::new(),
-                |mut acc: HashMap<u32, f64>, a: &(String, f64)| -> HashMap<u32, f64> {
-                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
+            x.bids.iter().fold(
+                FxHashMap::default(),
+                |mut acc: FxHashMap<u32, f64>, a: (&String, &f64)| -> FxHashMap<u32, f64> {
+                    let level = ((a
+                        .0
+                        .parse::<f64>()
+                        .expect("Cannot parse string price in denoise fn for ask_qts")
+                        - min_price)
+                        / shift)
+                        .round() as u32;
                     *acc.entry(level).or_insert(0f64) += a.1;
                     acc
                 },
             )
         })
         .collect();
-    let bid_qts: Vec<HashMap<u32, f64>> = states
+    let asks_qts: Vec<FxHashMap<u32, f64>> = states
         .iter()
         .map(|x| {
-            x.1.iter().fold(
-                HashMap::new(),
-                |mut acc: HashMap<u32, f64>, a: &(String, f64)| -> HashMap<u32, f64> {
-                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
+            x.asks.iter().fold(
+                FxHashMap::default(),
+                |mut acc: FxHashMap<u32, f64>, a: (&String, &f64)| -> FxHashMap<u32, f64> {
+                    let level = ((a
+                        .0
+                        .parse::<f64>()
+                        .expect("Cannot parse string price in denoise fn for bid_qts")
+                        - min_price)
+                        / shift)
+                        .round() as u32;
                     *acc.entry(level).or_insert(0f64) += a.1;
                     acc
                 },
             )
         })
         .collect();
-    let filtered_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
+    let filtered_states: Vec<OrderBookState> = states
         .iter()
         .enumerate()
-        .map(|(idx, s)| -> (Vec<(String, f64)>, Vec<(String, f64)>) {
-            let filtered_asks = s
-                .0
-                .iter()
-                .filter(|a| -> bool {
-                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
-                    let qty = ask_qts[idx].get(&level).unwrap();
-                    *qty > DENOISING_QTY_THRESHOLD
-                })
-                .map(|x| x.to_owned())
-                .collect();
+        .map(|(idx, s)| -> OrderBookState {
             let filtered_bids = s
-                .1
+                .bids
                 .iter()
-                .filter(|a| -> bool {
-                    let level = ((a.0.parse::<f64>().unwrap() - min_price) / shift).round() as u32;
-                    let qty = bid_qts[idx].get(&level).unwrap();
+                .filter(|b| -> bool {
+                    let level = ((b
+                        .0
+                        .parse::<f64>()
+                        .expect("Cannot parse string price in filtered_asks")
+                        - min_price)
+                        / shift)
+                        .round() as u32;
+                    let qty = bids_qts[idx]
+                        .get(&level)
+                        .expect("The level is not present in ask_qts");
                     *qty > DENOISING_QTY_THRESHOLD
                 })
-                .map(|x| x.to_owned())
+                .map(|x| (x.0.to_owned(), x.1.to_owned()))
                 .collect();
-            (filtered_asks, filtered_bids)
+            let filtered_asks = s
+                .asks
+                .iter()
+                .filter(|a| -> bool {
+                    let level = ((a
+                        .0
+                        .parse::<f64>()
+                        .expect("Cannot parse string price in filtered_bids")
+                        - min_price)
+                        / shift)
+                        .round() as u32;
+                    let qty = asks_qts[idx]
+                        .get(&level)
+                        .expect("The level is not present in bid_qts");
+                    *qty > DENOISING_QTY_THRESHOLD
+                })
+                .map(|x| (x.0.to_owned(), x.1.to_owned()))
+                .collect();
+            OrderBookState {
+                bids: filtered_bids,
+                asks: filtered_asks,
+                last_update_id: 0,
+            }
         })
         .collect();
     let new_max_price = get_max_price(&filtered_states) + 0.000001;
     let new_min_price = get_min_price(&filtered_states);
-    if max_price != new_max_price || min_price != new_min_price {
+
+    if format!("{:.6}", max_price) != format!("{:.6}", new_max_price)
+        || format!("{:.6}", min_price) != format!("{:.6}", new_min_price)
+    {
         denoise(&filtered_states, new_max_price, new_min_price)
     } else {
-        (ask_qts, bid_qts)
+        (bids_qts.clone(), asks_qts.clone())
     }
 }
 
@@ -298,25 +351,11 @@ fn rotate_image(filename: String, new_filename: String) {
     img.save(format!("./{}", new_filename)).unwrap();
 }
 
-fn create_input_image(states: Vec<OrderBookState>) {
-    let iterable_states: Vec<(Vec<(String, f64)>, Vec<(String, f64)>)> = states
-        .iter()
-        .map(|s| {
-            (
-                s.asks
-                    .iter()
-                    .map(|a| (a.0.to_owned(), a.1.to_owned()))
-                    .collect(),
-                s.bids
-                    .iter()
-                    .map(|b| (b.0.to_owned(), b.1.to_owned()))
-                    .collect(),
-            )
-        })
-        .collect();
-    let max_price = get_max_price(&iterable_states) + 0.000001;
-    let min_price = get_min_price(&iterable_states);
-    let (ask_qts, bid_qts) = denoise(&iterable_states, max_price, min_price);
+fn create_input_image(states: &[OrderBookState]) -> Option<(String, String)> {
+    let max_price = get_max_price(states) + 0.000001;
+    let min_price = get_min_price(states);
+
+    let (ask_qts, bid_qts) = denoise(states, max_price, min_price);
 
     let qty_iter = ask_qts
         .iter()
@@ -348,6 +387,7 @@ fn create_input_image(states: Vec<OrderBookState>) {
         }
         image::Rgb([r, g, 0])
     });
+
     let state = states.get(HISTORY_SIZE - 1).unwrap();
     let next_states = states.get(HISTORY_SIZE..ORDER_BOOK_QUEUE_SIZE).unwrap();
     let current_sell_price = get_current_sell_price(state).parse().unwrap();
@@ -366,16 +406,25 @@ fn create_input_image(states: Vec<OrderBookState>) {
         if let Err(e) = img.save(filepath.clone()) {
             error!("Cannot save dataset image on disk: {}", e);
         };
-        if let Err(e) = gcp::create_file(filename.clone(), filepath.clone()) {
-            error!("Cannot save dataset file in cloud: {}", e);
-        }
-        if let Err(e) = fs::remove_file(filepath) {
-            error!("Cannot remove dataset file after saving in cloud: {}", e);
-        }
+        Some((filename, filepath))
+    } else {
+        None
     }
 }
 
-pub fn from_binance_data() {
+fn run_consumer() {
+    thread::spawn(|| loop {
+        let order_book_state_series = ORDER_BOOK.lock().unwrap();
+        if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
+            let snapshot = order_book_state_series
+                .iter()
+                .map(|x| x.to_owned())
+                .collect_vec();
+        }
+    });
+}
+
+fn run_producer() {
     let keep_running = AtomicBool::new(true);
     let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
         if let WebsocketEvent::DepthOrderBook(event) = event {
@@ -391,5 +440,7 @@ pub fn from_binance_data() {
     };
 }
 
-#[test]
-fn test_image_content() {}
+pub fn from_binance_data() {
+    // run_consumer();
+    run_producer();
+}
