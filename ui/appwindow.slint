@@ -1,0 +1,24 @@
+import { GridBox, Button } from "std-widgets.slint";
+
+struct Price {
+    price: string,
+    quantity: string,
+}
+export component AppWindow inherits Window {
+    in property <[Price]> ask;
+    in property <[Price]> bid;
+    HorizontalLayout {
+        VerticalLayout {
+            for data in root.ask: HorizontalLayout {
+                Text { text: data.price; }
+                Text { text: data.quantity; }
+            }
+        }
+        VerticalLayout {
+            for data in root.bid: HorizontalLayout {
+                Text { text: data.price; }
+                Text { text: data.quantity; }
+            }
+        }
+    }
+}

@@ -1,5 +1,6 @@
 mod dataset;
-mod gcp;
+//mod gcp;
+mod ui;
 mod utils;
 use clap::Parser;
 use dotenv::dotenv;
@@ -22,13 +23,3 @@ fn main() {
         _ => print!("No task, exiting..."),
     };
 }
-/*
-slint::slint! {
-    export component MainWindow inherits Window {
-        Text {
-            text: "hello world";
-            color: green;
-        }
-    }
-}
-*/

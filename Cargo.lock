@@ -2257,7 +2257,9 @@ dependencies = [
  "codemap-diagnostic",
  "css-color-parser2",
  "derive_more",
+ "fontdue",
  "i-slint-common",
+ "image",
  "itertools 0.12.0",
  "linked_hash_set",
  "lyon_extra",
@@ -2266,6 +2268,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
+ "resvg",
  "rowan",
  "smol_str",
  "strum",
@@ -3048,6 +3051,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slint",
+ "slint-build",
 ]
 
 [[package]]
@@ -4211,6 +4215,18 @@ dependencies = [
  "pin-weak",
  "slint-macros",
  "vtable",
+]
+
+[[package]]
+name = "slint-build"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc96ba4cee939fb4015c213309fcdfe83178730766dbb5fb643d5938030d63e7"
+dependencies = [
+ "i-slint-compiler",
+ "spin_on",
+ "thiserror",
+ "toml_edit 0.21.0",
 ]
 
 [[package]]

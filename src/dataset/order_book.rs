@@ -1,9 +1,8 @@
-use binance::model::{Asks, Bids, DepthOrderBookEvent, OrderBook};
+use binance::model::{Asks, Bids};
 use itertools::Itertools;
-use merge_hashmap::Merge;
 use rustc_hash::FxHashMap;
 
-#[derive(Clone, Merge)]
+#[derive(Clone, Debug)]
 pub struct OrderBookState {
     pub last_update_id: u64,
     pub bids: FxHashMap<i64, f64>,
