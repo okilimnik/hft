@@ -22,7 +22,7 @@ impl OrderBookState {
             .iter()
             .sorted_by_key(|a| a.0)
             .rev()
-            .take(20)
+            .take(50)
             .map(|a| (a.0.to_owned(), a.1.to_owned()))
             .collect();
 
@@ -36,8 +36,7 @@ impl OrderBookState {
         let asks: FxHashMap<i64, f64> = asks_map
             .iter()
             .sorted_by_key(|a| a.0)
-            .rev()
-            .take(20)
+            .take(50)
             .map(|a| (a.0.to_owned(), a.1.to_owned()))
             .collect();
 
@@ -50,25 +49,27 @@ impl OrderBookState {
 
     pub fn merge(&mut self, updates: OrderBookState) {
         for entry in updates.bids.iter() {
-            *self.bids.entry(*entry.0).or_insert(0f64) += entry.1;
+            *self.bids.entry(*entry.0).or_insert(0f64) = *entry.1;
         }
         self.bids = self
             .bids
             .iter()
+            .filter(|x| *x.1 > 0f64)
             .sorted_by_key(|a| a.0)
             .rev()
-            .take(20)
+            .take(50)
             .map(|a| (a.0.to_owned(), a.1.to_owned()))
             .collect();
         for entry in updates.asks.iter() {
-            *self.asks.entry(*entry.0).or_insert(0f64) += entry.1;
+            *self.asks.entry(*entry.0).or_insert(0f64) = *entry.1;
         }
         self.asks = self
             .asks
             .iter()
+            .filter(|x| *x.1 > 0f64)
             .sorted_by_key(|a| a.0)
             .rev()
-            .take(20)
+            .take(50)
             .map(|a| (a.0.to_owned(), a.1.to_owned()))
             .collect();
     }

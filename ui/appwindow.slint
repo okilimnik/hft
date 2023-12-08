@@ -1,4 +1,5 @@
 import { GridBox, Button } from "std-widgets.slint";
+import { Theme } from "theme.slint";
 
 struct Price {
     price: string,
@@ -7,15 +8,25 @@ struct Price {
 export component AppWindow inherits Window {
     in property <[Price]> ask;
     in property <[Price]> bid;
+
+    title: "Order Book Demo";
+    min-width: 320px;
+    min-height: 240px;
+    background: Theme.palette.pure-black;
+    preferred-width: 800px;
+    preferred-height: 480px;
+
     HorizontalLayout {
         VerticalLayout {
-            for data in root.ask: HorizontalLayout {
+            Text { text: "Bids"; }
+            for data in root.bid: HorizontalLayout {
                 Text { text: data.price; }
                 Text { text: data.quantity; }
             }
         }
         VerticalLayout {
-            for data in root.bid: HorizontalLayout {
+            Text { text: "Asks"; }
+            for data in root.ask: HorizontalLayout {
                 Text { text: data.price; }
                 Text { text: data.quantity; }
             }

@@ -35,17 +35,22 @@ pub fn set_prices(order_book: &OrderBookState) {
     let ask = order_book
         .asks
         .iter()
+        .sorted_by_key(|a| a.0)
+        .take(20)
         .map(|x| Price {
             price: x.0.to_string().into(),
-            quantity: x.1.to_string().into(),
+            quantity: format!("{:.5}", x.1).into(),
         })
         .collect_vec();
     let bid = order_book
         .bids
         .iter()
+        .sorted_by_key(|a| a.0)
+        .rev()
+        .take(20)
         .map(|x| Price {
             price: x.0.to_string().into(),
-            quantity: x.1.to_string().into(),
+            quantity: format!("{:.5}", x.1).into(),
         })
         .collect_vec();
     set_ask(ask);
