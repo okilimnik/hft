@@ -1,26 +1,27 @@
-use binance::api::*;
-use binance::market::*;
+use binance::api::Binance;
+use binance::market::Market;
 use binance::model::DepthOrderBookEvent;
 use binance::websockets::WebSockets;
 use binance::websockets::WebsocketEvent;
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use log::debug;
 use log::error;
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
 
 use crate::dataset::order_book::OrderBookState;
 use crate::ui;
+use crate::utils;
 
 const SYMBOL: &str = "BTCTUSD";
 const HISTORY_SIZE: usize = 60;
 const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
+const SELL_SHIFT: i64 = 40;
+const MIN_BIDS_IN_LINE: usize = 2; // how many states the price greater than price + SELL_SHIFT gets in line
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -50,6 +51,7 @@ fn calc_new_state(event: DepthOrderBookEvent) {
             event.bids,
             event.asks,
         ));
+        // update UI
         ui::set_prices(&new_order_book);
         order_book_state_series.push_back(new_order_book);
     }
@@ -58,12 +60,68 @@ fn calc_new_state(event: DepthOrderBookEvent) {
     }
 }
 
+fn to_svm_row(label: i64, order_book: &OrderBook) -> String {
+    row.into_iter().fold(format!("{}", label), |acc, e| {
+        acc + " " + &e.0 + ":" + &format!("{:.5}", e.1)
+    })
+}
+
+fn create_input() {
+    let states = ORDER_BOOK.lock().unwrap();
+    let input_series = states.iter().take(HISTORY_SIZE);
+    let label_series = states.iter().rev().take(PREDICTION_HEAD).rev();
+    let buy_price = input_series
+        .last()
+        .unwrap()
+        .asks
+        .iter()
+        .min_by_key(|a| a.0)
+        .unwrap()
+        .0
+        .to_owned();
+    let future_best_bids =
+        label_series.map(|state| state.bids.iter().max_by_key(|bid| bid.0).unwrap());
+    let relevant_bids_in_line = future_best_bids.fold(vec![], |mut acc, x| {
+        if (x.0 - buy_price) >= SELL_SHIFT {
+            acc.push(*x.0);
+            acc
+        } else {
+            vec![]
+        }
+    });
+    // should trade?
+    let label = if relevant_bids_in_line.len() >= MIN_BIDS_IN_LINE {
+        1
+    } else {
+        0
+    };
+    // input
+    let svm_row = input_series.fold(format!("{}", label), |mut acc, state| {
+        acc + " "
+            + &state
+                .asks
+                .iter()
+                .fold("".to_string(), |mut acc: String, x| {
+                    acc + " " + &x.0.to_string() + ":" + &format!("{:.5}", x.1)
+                })
+            + " "
+            + &state
+                .bids
+                .iter()
+                .fold("".to_string(), |mut acc: String, x| {
+                    acc + " " + &x.0.to_string() + ":" + &format!("{:.5}", x.1)
+                })
+    });
+    utils::to_file("./input.svm", svm_row, true);
+}
+
 fn run_producer() {
     thread::spawn(|| {
         let keep_running = AtomicBool::new(true);
         let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
             if let WebsocketEvent::DepthOrderBook(event) = event {
                 calc_new_state(event);
+                create_input();
             }
             Ok(())
         });
@@ -75,6 +133,8 @@ fn run_producer() {
         };
     });
 }
+
+fn calc_label() {}
 
 fn run_consumer() {
     let _ = ui::render();

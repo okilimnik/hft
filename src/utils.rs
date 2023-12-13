@@ -1,7 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 
-fn to_file(filename: &str, data: String, append: bool) {
+pub fn to_file(filename: &str, data: String, append: bool) {
     fs::create_dir_all("./dataset").unwrap();
     let mut file = OpenOptions::new()
         .create(true)

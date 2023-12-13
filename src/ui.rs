@@ -19,7 +19,7 @@ pub fn render() -> Result<(), slint::PlatformError> {
         let ui_handler = ui.as_weak();
         timer.start(
             TimerMode::Repeated,
-            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(50),
             move || {
                 let ask = slint::ModelRc::new(slint::VecModel::from(ASK.lock().unwrap().clone()));
                 ui_handler.unwrap().set_ask(ask);
