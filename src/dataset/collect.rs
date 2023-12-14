@@ -6,6 +6,7 @@ use binance::websockets::WebsocketEvent;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::error;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 const SELL_SHIFT: i64 = 40;
 const MIN_BIDS_IN_LINE: usize = 2; // how many states the price greater than price + SELL_SHIFT gets in line
+const QUANTITY_THRESHOLD: f64 = 0.01;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -66,6 +68,11 @@ fn to_svm_row(label: i64, order_book: &OrderBook) -> String {
     })
 }
 
+fn get_price_key(i: usize, price_for_level_10: i64) -> i64 {
+    let shift = i - 10;
+    price_for_level_10 + (shift * 10) as i64
+}
+
 fn create_input() {
     let states = ORDER_BOOK.lock().unwrap();
     let input_series = states.iter().take(HISTORY_SIZE);
@@ -95,23 +102,57 @@ fn create_input() {
     } else {
         0
     };
-    // input
-    let svm_row = input_series.fold(format!("{}", label), |mut acc, state| {
-        acc + " "
-            + &state
+    let price_min = input_series
+        .map(|state| {
+            state
                 .asks
                 .iter()
-                .fold("".to_string(), |mut acc: String, x| {
-                    acc + " " + &x.0.to_string() + ":" + &format!("{:.5}", x.1)
-                })
-            + " "
-            + &state
+                .min_by_key(|x: &(&i64, &f64)| x.0)
+                .unwrap()
+                .0
+        })
+        .min()
+        .unwrap()
+        .to_owned();
+    // at what price we would  buy
+    let price_for_level_10 = input_series
+        .last()
+        .unwrap()
+        .asks
+        .iter()
+        .filter(|x| *x.1 > QUANTITY_THRESHOLD)
+        .min_by_key(|x| x.0)
+        .unwrap()
+        .0
+        .to_owned();
+    let price_max = input_series
+        .map(|state| {
+            state
                 .bids
                 .iter()
-                .fold("".to_string(), |mut acc: String, x| {
-                    acc + " " + &x.0.to_string() + ":" + &format!("{:.5}", x.1)
-                })
-    });
+                .max_by_key(|x: &(&i64, &f64)| x.0)
+                .unwrap()
+                .0
+        })
+        .max()
+        .unwrap()
+        .to_owned();
+    // input
+    let svm_row = input_series
+        .enumerate()
+        .fold(label.to_string(), |acc, (i, state)| {
+            (1..20).fold(acc, |mut acc: String, i| -> String {
+                let price_key = get_price_key(i, price_for_level_10);
+                let quantity = *state.bids.entry(price_key).or_insert(0f64)
+                    - *state.asks.entry(price_key).or_insert(0f64);
+                if quantity.abs() > QUANTITY_THRESHOLD {
+                    let input_value = i.to_string() + ":" + &format!("{:.5}", quantity);
+                    acc + " " + &input_value
+                } else {
+                    acc
+                }
+            })
+        });
     utils::to_file("./input.svm", svm_row, true);
 }
 
