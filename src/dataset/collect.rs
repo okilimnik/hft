@@ -21,8 +21,8 @@ const SYMBOL: &str = "BTCTUSD";
 const HISTORY_SIZE: usize = 60;
 const PREDICTION_HEAD: usize = 10;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
-const SELL_SHIFT: i64 = 40;
-const MIN_HITS_IN_LINE: usize = 2; // how many states the price greater than price + SELL_SHIFT gets in line
+const CLOSE_ORDER_SHIFT: i64 = 40;
+const MIN_STOP_HITS_IN_LINE: usize = 2; // how many states in line reach price we need to close order at
 const QUANTITY_THRESHOLD: f64 = 0.01;
 
 lazy_static! {
@@ -73,8 +73,8 @@ fn get_price_key(i: usize, price_for_level_10: i64) -> i64 {
     price_for_level_10 + (shift * 10) as i64
 }
 
-fn get_index(i: usize, j: usize, is_bid: bool) -> usize {
-    0
+fn get_price_by_index(j: usize, price_for_level_5: i64) -> i64 {
+    price_for_level_5 + 10 * (j - 5) as i64
 }
 
 fn create_input() {
@@ -110,30 +110,31 @@ fn create_input() {
     let relevant_bids_in_line = future_best_bids
         .enumerate()
         .fold(vec![], |mut acc, (i, x)| {
-            if (x.0 - buy_price) >= SELL_SHIFT {
+            if (x.0 - buy_price) >= CLOSE_ORDER_SHIFT {
                 acc.push((i, *x.0));
                 acc
             } else {
                 vec![]
             }
         });
-    let relevant_asks_in_line = future_best_asks
-        .enumerate()
-        .fold(vec![], |mut acc, (i, x)| {
-            if (sell_price - x.0) >= SELL_SHIFT {
-                acc.push((i, *x.0));
-                acc
-            } else {
-                vec![]
-            }
-        });
+    let relevant_asks_in_line =
+        future_best_asks
+            .enumerate()
+            .fold(vec![], |mut acc: Vec<(usize, i64)>, (i, x)| {
+                if (sell_price - x.0) >= CLOSE_ORDER_SHIFT {
+                    acc.push((i, *x.0));
+                    acc
+                } else {
+                    vec![]
+                }
+            });
     // default is noise
     let mut label = 0;
-    if relevant_bids_in_line.len() >= MIN_HITS_IN_LINE {
+    if relevant_bids_in_line.len() >= MIN_STOP_HITS_IN_LINE {
         // buy signal
         label = 1;
     }
-    if relevant_asks_in_line.len() >= MIN_HITS_IN_LINE
+    if relevant_asks_in_line.len() >= MIN_STOP_HITS_IN_LINE
         && relevant_asks_in_line.first().unwrap().0 < relevant_bids_in_line.first().unwrap().0
     {
         // sell signal
@@ -158,45 +159,22 @@ fn create_input() {
     // input
     let svm_row = input_series
         .enumerate()
-        .fold(label.to_string(), |acc0, (i, state)| {
-            let acc1 = state
-                .bids
-                .iter()
-                .sorted_by_key(|x| x.0)
-                .rev()
-                .take(20)
-                .enumerate()
-                .fold(acc0, |mut acc: String, (j, x)| -> String {
-                    let index = get_index(i, j, true);
-                    let normalized_price = x.0 - price_that_matters;
-                    acc + " "
-                        + &index.to_string()
-                        + ":"
-                        + &normalized_price.to_string()
-                        + " "
-                        + &(index + 1).to_string()
-                        + ":"
-                        + &format!("{:.5}", x.1)
-                });
-            let acc2 = state
-                .asks
-                .iter()
-                .sorted_by_key(|x| x.0)
-                .take(20)
-                .enumerate()
-                .fold(acc1, |mut acc: String, (j, x)| -> String {
-                    let index = get_index(i, j, false);
-                    let normalized_price = x.0 - price_that_matters;
-                    acc + " "
-                        + &index.to_string()
-                        + ":"
-                        + &normalized_price.to_string()
-                        + " "
-                        + &(index + 1).to_string()
-                        + ":"
-                        + &format!("{:.5}", x.1)
-                });
-            acc2
+        .fold(label.to_string(), |acc, (i, state)| -> String {
+            (0..10).fold(acc, |acc, j| -> String {
+                let quantity = *state
+                    .bids
+                    .entry(get_price_by_index(j, price_that_matters))
+                    .or_insert(0f64)
+                    - *state
+                        .asks
+                        .entry(get_price_by_index(j, price_that_matters))
+                        .or_insert(0f64);
+                if quantity >= QUANTITY_THRESHOLD {
+                    acc + " " + &((i * 10) + j + 1).to_string() + ":" + &format!("{:.4}", quantity)
+                } else {
+                    acc
+                }
+            })
         });
     utils::to_file("./input.svm", svm_row, true);
 }
