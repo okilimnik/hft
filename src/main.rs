@@ -1,5 +1,5 @@
 mod dataset;
-//mod gcp;
+mod gcp;
 mod ui;
 mod utils;
 use clap::Parser;

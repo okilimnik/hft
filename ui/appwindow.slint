@@ -8,6 +8,7 @@ struct Price {
 export component AppWindow inherits Window {
     in property <[Price]> ask;
     in property <[Price]> bid;
+    in property <string> label;
 
     title: "Order Book Demo";
     min-width: 320px;
@@ -16,19 +17,22 @@ export component AppWindow inherits Window {
     preferred-width: 800px;
     preferred-height: 480px;
 
-    HorizontalLayout {
-        VerticalLayout {
-            Text { text: "Bids"; }
-            for data in root.bid: HorizontalLayout {
-                Text { text: data.price; }
-                Text { text: data.quantity; }
+    VerticalLayout {
+        Text { text: label; }
+        HorizontalLayout {
+            VerticalLayout {
+                Text { text: "Bids"; }
+                for data in root.bid: HorizontalLayout {
+                    Text { text: data.price; }
+                    Text { text: data.quantity; }
+                }
             }
-        }
-        VerticalLayout {
-            Text { text: "Asks"; }
-            for data in root.ask: HorizontalLayout {
-                Text { text: data.price; }
-                Text { text: data.quantity; }
+            VerticalLayout {
+                Text { text: "Asks"; }
+                for data in root.ask: HorizontalLayout {
+                    Text { text: data.price; }
+                    Text { text: data.quantity; }
+                }
             }
         }
     }

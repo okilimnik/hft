@@ -7,3 +7,4 @@ lgbm*
 *.txt
 /dataset
 gcp.json
+*.svm

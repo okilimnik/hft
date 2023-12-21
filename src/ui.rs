@@ -10,6 +10,7 @@ slint::include_modules!();
 lazy_static! {
     static ref ASK: Arc<Mutex<Vec<Price>>> = Arc::new(Mutex::new(vec![]));
     static ref BID: Arc<Mutex<Vec<Price>>> = Arc::new(Mutex::new(vec![]));
+    static ref LABEL: Arc<Mutex<String>> = Arc::new(Mutex::new("".to_string()));
 }
 
 pub fn render() -> Result<(), slint::PlatformError> {
@@ -25,10 +26,25 @@ pub fn render() -> Result<(), slint::PlatformError> {
                 ui_handler.unwrap().set_ask(ask);
                 let bid = slint::ModelRc::new(slint::VecModel::from(BID.lock().unwrap().clone()));
                 ui_handler.unwrap().set_bid(bid);
+                let label = LABEL.lock().unwrap().clone();
+                ui_handler.unwrap().set_label(label.into());
             },
         );
     }
     ui.run()
+}
+
+pub fn set_label(label: i64) {
+    let mut string_label = LABEL.lock().unwrap();
+    if label == 1 {
+        *string_label = "Buy".to_string();
+    }
+    if label == -1 {
+        *string_label = "Sell".to_string();
+    }
+    if label == 0 {
+        *string_label = "Noise".to_string();
+    }
 }
 
 pub fn set_prices(order_book: &OrderBookState) {
