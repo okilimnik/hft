@@ -14,7 +14,7 @@ COPY --from=planner /app/recipe.json recipe.json
 # Notice that we are specifying the --target flag!
 RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 COPY . .
-RUN RUSTFLAGS='-C target-cpu=skylake' cargo build --release --target x86_64-unknown-linux-musl --bin neusa
+RUN cargo build --release --target x86_64-unknown-linux-musl --bin neusa
 
 FROM alpine AS runtime
 RUN addgroup -S myuser && adduser -S myuser -G myuser

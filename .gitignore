@@ -8,3 +8,4 @@ lgbm*
 /dataset
 gcp.json
 *.svm
+run.sh

@@ -8,10 +8,14 @@ use lazy_static::lazy_static;
 use log::debug;
 use log::error;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
+use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use crate::dataset::order_book::OrderBookState;
 use crate::gcp;
@@ -25,57 +29,10 @@ const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 const CLOSE_ORDER_SHIFT: i64 = 30;
 const MIN_STOP_HITS_IN_LINE: usize = 2; // how many states in line reach price we need to close order at
 const QUANTITY_THRESHOLD: f64 = 0.01;
+const DATA_FETCH_INTERVAL: u128 = 3000;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
-    static ref ORDER_BOOK: Arc<Mutex<VecDeque<OrderBookState>>> =
-        Arc::new(Mutex::new(VecDeque::new()));
-}
-
-fn calc_new_state(event: DepthOrderBookEvent) {
-    let mut order_book_state_series = ORDER_BOOK.lock().unwrap();
-    if order_book_state_series.is_empty() {
-        let new_order_book = MARKET
-            .get_custom_depth(SYMBOL, 5000)
-            .expect("Failed to get initial order book.");
-        order_book_state_series.push_back(OrderBookState::from(
-            new_order_book.last_update_id,
-            new_order_book.bids,
-            new_order_book.asks,
-        ));
-    };
-    let mut new_order_book = order_book_state_series
-        .back()
-        .expect("Cannot get last item in states")
-        .clone();
-    if event.final_update_id > new_order_book.last_update_id {
-        new_order_book.merge(OrderBookState::from(
-            event.final_update_id,
-            event.bids,
-            event.asks,
-        ));
-        // update UI
-        //ui::set_prices(&new_order_book);
-        order_book_state_series.push_back(new_order_book);
-    }
-    if order_book_state_series.len() > ORDER_BOOK_QUEUE_SIZE {
-        order_book_state_series.pop_front();
-    }
-    if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-        let input_series = order_book_state_series
-            .iter()
-            .take(HISTORY_SIZE)
-            .cloned()
-            .collect_vec();
-        let label_series: Vec<OrderBookState> = order_book_state_series
-            .iter()
-            .rev()
-            .take(PREDICTION_HEAD)
-            .rev()
-            .cloned()
-            .collect_vec();
-        create_input(input_series, label_series);
-    }
 }
 
 fn get_price_by_index(j: usize, price_for_level_5: i64) -> i64 {
@@ -204,21 +161,55 @@ fn create_input(input_series: Vec<OrderBookState>, label_series: Vec<OrderBookSt
 }
 
 fn run_producer() {
-    // thread::spawn(|| {
-    let keep_running = AtomicBool::new(true);
-    let mut web_socket = WebSockets::new(|event: WebsocketEvent| {
-        if let WebsocketEvent::DepthOrderBook(event) = event {
-            calc_new_state(event);
+    let mut order_book_state_series = VecDeque::new();
+    let mut t: u128 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    loop {
+        debug!("t: {}", t);
+        let delta: u128 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            - t;
+        debug!("delta: {}", delta);
+        if delta >= DATA_FETCH_INTERVAL {
+            debug!("Making binance request");
+            let new_order_book = MARKET.get_custom_depth(SYMBOL, 1000).unwrap();
+            order_book_state_series.push_back(OrderBookState::from(
+                new_order_book.last_update_id,
+                new_order_book.bids,
+                new_order_book.asks,
+            ));
+            if order_book_state_series.len() > ORDER_BOOK_QUEUE_SIZE {
+                order_book_state_series.pop_front();
+            }
+            if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
+                let input_series = order_book_state_series
+                    .iter()
+                    .take(HISTORY_SIZE)
+                    .cloned()
+                    .collect_vec();
+                let label_series: Vec<OrderBookState> = order_book_state_series
+                    .iter()
+                    .rev()
+                    .take(PREDICTION_HEAD)
+                    .rev()
+                    .cloned()
+                    .collect_vec();
+                create_input(input_series, label_series);
+            }
+            t = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+        } else {
+            thread::sleep(Duration::from_millis(
+                (DATA_FETCH_INTERVAL - delta).try_into().unwrap(),
+            ));
         }
-        Ok(())
-    });
-    web_socket
-        .connect(&format!("{}@depth", SYMBOL.to_lowercase()))
-        .expect("Cannot connect to ws streams");
-    if let Err(e) = web_socket.event_loop(&keep_running) {
-        error!("Error: {:?}", e);
-    };
-    //   });
+    }
 }
 
 fn run_consumer() {
@@ -227,7 +218,6 @@ fn run_consumer() {
 
 pub fn from_binance_data() {
     run_producer();
-    //run_consumer();
 }
 
 #[cfg(test)]
