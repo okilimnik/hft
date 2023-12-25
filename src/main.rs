@@ -1,5 +1,6 @@
 mod dataset;
 mod gcp;
+mod lightgbm;
 mod ui;
 mod utils;
 use clap::Parser;
@@ -20,6 +21,8 @@ fn main() {
 
     match args.task.as_str() {
         "collect" => dataset::collect::from_binance_data(),
+        "split" => dataset::utils::split(),
+        "train" => lightgbm::train(),
         _ => print!("No task, exiting..."),
     };
 }

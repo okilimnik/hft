@@ -23,11 +23,11 @@ use crate::ui;
 use crate::utils;
 
 const SYMBOL: &str = "BTCTUSD";
-const HISTORY_SIZE: usize = 180;
-const PREDICTION_HEAD: usize = 60;
+const HISTORY_SIZE: usize = 20;
+const PREDICTION_HEAD: usize = 5;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
-const CLOSE_ORDER_SHIFT: i64 = 30;
-const MIN_STOP_HITS_IN_LINE: usize = 2; // how many states in line reach price we need to close order at
+const CLOSE_ORDER_SHIFT: i64 = 20;
+const MIN_STOP_HITS_IN_LINE: usize = 1; // how many states in line reach price we need to close order at
 const QUANTITY_THRESHOLD: f64 = 0.01;
 const DATA_FETCH_INTERVAL: u128 = 3000;
 
@@ -167,15 +167,12 @@ fn run_producer() {
         .unwrap()
         .as_millis();
     loop {
-        debug!("t: {}", t);
         let delta: u128 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis()
             - t;
-        debug!("delta: {}", delta);
         if delta >= DATA_FETCH_INTERVAL {
-            debug!("Making binance request");
             let new_order_book = MARKET.get_custom_depth(SYMBOL, 1000).unwrap();
             order_book_state_series.push_back(OrderBookState::from(
                 new_order_book.last_update_id,
