@@ -34,3 +34,4 @@ CMD RUST_LOG=debug /usr/local/bin/neusa --task collect
 # RUST_LOG=debug cargo run -- --task collect
 # RUST_LOG=debug cargo run -- --task split
 # RUST_LOG=debug cargo run -- --task train
+# RUST_LOG=debug cargo run -- --task predict
