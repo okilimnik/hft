@@ -1,6 +1,6 @@
 use std::{fs::read_to_string, process::Command};
 
-use crate::utils::to_file;
+use crate::dataset::utils::to_file;
 
 pub fn train() {
     let output = Command::new("lightgbm")

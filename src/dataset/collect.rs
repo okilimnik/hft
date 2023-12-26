@@ -17,11 +17,9 @@ use crate::gcp;
 use crate::trade;
 use crate::ui;
 
-const SYMBOL: &str = "BTCTUSD";
 const HISTORY_SIZE: usize = 20;
 const PREDICTION_HEAD: usize = 5;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
-const CLOSE_ORDER_SHIFT: i64 = 20;
 const MIN_STOP_HITS_IN_LINE: usize = 1; // how many states in line reach price we need to close order at
 const DATA_FETCH_INTERVAL: u128 = 3000;
 
@@ -30,6 +28,7 @@ lazy_static! {
 }
 
 fn calc_label(input_series: &[OrderBookState], label_series: &[OrderBookState]) -> i64 {
+    let profit_value = env::var("PROFIT").unwrap().parse().unwrap();
     let last_input = input_series.last().unwrap();
     let buy_price = last_input
         .asks
@@ -64,7 +63,7 @@ fn calc_label(input_series: &[OrderBookState], label_series: &[OrderBookState]) 
             .iter()
             .enumerate()
             .fold(vec![], |mut acc, (i, x)| {
-                if (x.0 - buy_price) >= CLOSE_ORDER_SHIFT {
+                if (x.0 - buy_price) >= profit_value {
                     acc.push((i, *x.0));
                 }
                 acc
@@ -74,7 +73,7 @@ fn calc_label(input_series: &[OrderBookState], label_series: &[OrderBookState]) 
             .iter()
             .enumerate()
             .fold(vec![], |mut acc: Vec<(usize, i64)>, (i, x)| {
-                if (sell_price - x.0) >= CLOSE_ORDER_SHIFT {
+                if (sell_price - x.0) >= profit_value {
                     acc.push((i, *x.0));
                 }
                 acc
@@ -126,7 +125,9 @@ fn run_producer() {
             .as_millis()
             - t;
         if delta >= DATA_FETCH_INTERVAL {
-            let new_order_book = MARKET.get_custom_depth(SYMBOL, 1000).unwrap();
+            let new_order_book = MARKET
+                .get_custom_depth(env::var("SYMBOL").unwrap(), 1000)
+                .unwrap();
             order_book_state_series.push_back(OrderBookState::from(
                 new_order_book.last_update_id,
                 new_order_book.bids,

@@ -5,7 +5,7 @@ use std::io::Write;
 
 use super::order_book::OrderBookState;
 
-const QUANTITY_THRESHOLD: f64 = 0.01;
+pub const QUANTITY_THRESHOLD: f64 = 0.01;
 
 pub fn to_file(filepath: &str, data: String, append: bool) {
     //fs::create_dir_all("./dataset").unwrap();
