@@ -1,26 +1,21 @@
 use binance::api::Binance;
 use binance::market::Market;
-use binance::model::DepthOrderBookEvent;
-use binance::websockets::WebSockets;
-use binance::websockets::WebsocketEvent;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::debug;
 use log::error;
 use std::collections::VecDeque;
-use std::path::Path;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::env;
 use std::thread;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use crate::dataset::order_book::OrderBookState;
+use crate::dataset::utils;
 use crate::gcp;
+use crate::trade;
 use crate::ui;
-use crate::utils;
 
 const SYMBOL: &str = "BTCTUSD";
 const HISTORY_SIZE: usize = 20;
@@ -28,15 +23,10 @@ const PREDICTION_HEAD: usize = 5;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 const CLOSE_ORDER_SHIFT: i64 = 20;
 const MIN_STOP_HITS_IN_LINE: usize = 1; // how many states in line reach price we need to close order at
-const QUANTITY_THRESHOLD: f64 = 0.01;
 const DATA_FETCH_INTERVAL: u128 = 3000;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
-}
-
-fn get_price_by_index(j: usize, price_for_level_5: i64) -> i64 {
-    price_for_level_5 + 10 * (j as i64 - 5)
 }
 
 fn calc_label(input_series: &[OrderBookState], label_series: &[OrderBookState]) -> i64 {
@@ -114,46 +104,9 @@ fn create_input(input_series: Vec<OrderBookState>, label_series: Vec<OrderBookSt
         return;
     }
     debug!("Label is {}", label);
-    let price_that_matters = input_series
-        .iter()
-        .map(|state| {
-            state
-                .asks
-                .iter()
-                .min_by_key(|x: &(&i64, &f64)| x.0)
-                .unwrap()
-                .0
-        })
-        .min()
-        .unwrap()
-        .to_owned();
+
     // input
-    let svm_row =
-        input_series
-            .iter()
-            .enumerate()
-            .fold(label.to_string(), |acc, (i, state)| -> String {
-                (0..10).fold(acc, |acc, j| -> String {
-                    let quantity = *state
-                        .bids
-                        .clone()
-                        .entry(get_price_by_index(j, price_that_matters))
-                        .or_insert(0f64)
-                        - *state
-                            .asks
-                            .clone()
-                            .entry(get_price_by_index(j, price_that_matters))
-                            .or_insert(0f64);
-                    if quantity >= QUANTITY_THRESHOLD {
-                        acc + " "
-                            + &((i * 10) + j + 1).to_string()
-                            + ":"
-                            + &format!("{:.4}", quantity)
-                    } else {
-                        acc
-                    }
-                })
-            });
+    let svm_row = utils::to_svm(label, input_series);
     let filename = "input.svm".to_string();
     let filepath = format!("./{}", filename);
     utils::to_file(&filepath, svm_row, true);
@@ -183,19 +136,37 @@ fn run_producer() {
                 order_book_state_series.pop_front();
             }
             if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-                let input_series = order_book_state_series
-                    .iter()
-                    .take(HISTORY_SIZE)
-                    .cloned()
-                    .collect_vec();
-                let label_series: Vec<OrderBookState> = order_book_state_series
-                    .iter()
-                    .rev()
-                    .take(PREDICTION_HEAD)
-                    .rev()
-                    .cloned()
-                    .collect_vec();
-                create_input(input_series, label_series);
+                match env::var("TRADE") {
+                    Ok(_) => {
+                        let trade_series: Vec<OrderBookState> = order_book_state_series
+                            .iter()
+                            .rev()
+                            .take(HISTORY_SIZE)
+                            .rev()
+                            .cloned()
+                            .collect_vec();
+                        trade::trade(trade_series);
+                    }
+                    Err(e) => (),
+                };
+                match env::var("COLLECT") {
+                    Ok(_) => {
+                        let input_series = order_book_state_series
+                            .iter()
+                            .take(HISTORY_SIZE)
+                            .cloned()
+                            .collect_vec();
+                        let label_series: Vec<OrderBookState> = order_book_state_series
+                            .iter()
+                            .rev()
+                            .take(PREDICTION_HEAD)
+                            .rev()
+                            .cloned()
+                            .collect_vec();
+                        create_input(input_series, label_series);
+                    }
+                    Err(e) => (),
+                };
             }
             t = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -223,7 +194,7 @@ mod tests {
 
     use super::*;
 
-    #[test]
+    /*  #[test]
     fn get_price_by_index_test() {
         let result = get_price_by_index(5, 20000);
         assert_eq!(result, 20000);
@@ -231,7 +202,7 @@ mod tests {
         assert_eq!(result, 19960);
         let result = get_price_by_index(6, 20000);
         assert_eq!(result, 20010);
-    }
+    }*/
 
     #[test]
     fn calc_label_test() {

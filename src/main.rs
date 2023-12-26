@@ -1,8 +1,8 @@
 mod dataset;
 mod gcp;
 mod lightgbm;
+mod trade;
 mod ui;
-mod utils;
 use clap::Parser;
 use dotenv::dotenv;
 
@@ -23,7 +23,6 @@ fn main() {
         "collect" => dataset::collect::from_binance_data(),
         "split" => dataset::utils::split(),
         "train" => lightgbm::train(),
-        "predict" => lightgbm::predict(),
         _ => print!("No task, exiting..."),
     };
 }
