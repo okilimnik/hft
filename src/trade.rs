@@ -28,7 +28,7 @@ pub fn trade(data: Vec<OrderBookState>) {
     debug!("Prediction is {:.3}", prediction);
 
     let symbol = env::var("SYMBOL").unwrap();
-    let quantity: f64 = env::var("TRADE_AMOUNT_BTC").unwrap().parse().unwrap();
+    let quantity: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let profit_value: f64 = env::var("PROFIT").unwrap().parse().unwrap();
     let opened_orders = ACCOUNT.get_open_orders(&symbol).unwrap();
     if opened_orders.is_empty() {

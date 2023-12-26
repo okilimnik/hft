@@ -137,7 +137,7 @@ fn run_producer() {
                 order_book_state_series.pop_front();
             }
             if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-                match env::var("TRADE") {
+                match env::var("TRADE_AMOUNT") {
                     Ok(_) => {
                         let trade_series: Vec<OrderBookState> = order_book_state_series
                             .iter()
