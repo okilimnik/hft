@@ -28,9 +28,7 @@ CMD RUST_LOG=debug /usr/local/bin/neusa --task collect
 # docker build -t neusa .
 # docker tag neusa asia-northeast1-docker.pkg.dev/neusa-a919b/neusa/neusa-hft:latest
 # docker push asia-northeast1-docker.pkg.dev/neusa-a919b/neusa/neusa-hft
-# docker run -it --rm --name neusatest neusa
 
-# RUST_LOG=debug target/release/neusa --task collect
-# RUST_LOG=debug SYMBOL=BTCUSDT PROFIT=20 TRADE_AMOUNT=0.005 COLLECT=true BINANCE_API_KEY= BINANCE_SECRET= cargo run
-# RUST_LOG=debug cargo run -- --task split
-# RUST_LOG=debug cargo run -- --task train
+# cargo run
+# cargo run -- --task split
+# cargo run -- --task train

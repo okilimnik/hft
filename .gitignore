@@ -9,3 +9,4 @@ lgbm*
 gcp.json
 *.svm
 run.sh
+/.cargo

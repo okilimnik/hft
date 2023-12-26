@@ -1,6 +1,7 @@
 /target
 /.vscode
 /lightgbm
+/.cargo
 /env
 .env
 .DS_Store
