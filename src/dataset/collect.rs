@@ -137,36 +137,30 @@ fn run_producer() {
                 order_book_state_series.pop_front();
             }
             if order_book_state_series.len() == ORDER_BOOK_QUEUE_SIZE {
-                match env::var("TRADE_AMOUNT") {
-                    Ok(_) => {
-                        let trade_series: Vec<OrderBookState> = order_book_state_series
-                            .iter()
-                            .rev()
-                            .take(HISTORY_SIZE)
-                            .rev()
-                            .cloned()
-                            .collect_vec();
-                        trade::trade(trade_series);
-                    }
-                    Err(e) => (),
+                if env::var("TRADE_AMOUNT").is_ok() {
+                    let trade_series: Vec<OrderBookState> = order_book_state_series
+                        .iter()
+                        .rev()
+                        .take(HISTORY_SIZE)
+                        .rev()
+                        .cloned()
+                        .collect_vec();
+                    trade::trade(trade_series);
                 };
-                match env::var("COLLECT") {
-                    Ok(_) => {
-                        let input_series = order_book_state_series
-                            .iter()
-                            .take(HISTORY_SIZE)
-                            .cloned()
-                            .collect_vec();
-                        let label_series: Vec<OrderBookState> = order_book_state_series
-                            .iter()
-                            .rev()
-                            .take(PREDICTION_HEAD)
-                            .rev()
-                            .cloned()
-                            .collect_vec();
-                        create_input(input_series, label_series);
-                    }
-                    Err(e) => (),
+                if env::var("COLLECT").is_ok() {
+                    let input_series = order_book_state_series
+                        .iter()
+                        .take(HISTORY_SIZE)
+                        .cloned()
+                        .collect_vec();
+                    let label_series: Vec<OrderBookState> = order_book_state_series
+                        .iter()
+                        .rev()
+                        .take(PREDICTION_HEAD)
+                        .rev()
+                        .cloned()
+                        .collect_vec();
+                    create_input(input_series, label_series);
                 };
             }
             t = SystemTime::now()

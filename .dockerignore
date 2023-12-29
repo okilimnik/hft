@@ -1,11 +1,12 @@
 /target
 /.vscode
-/lightgbm
+/.github
 /.cargo
 /env
 .env
 .DS_Store
-alerts.txt
 /dataset
 run.sh
 *.svm
+svm_input.txt
+run.sh

@@ -1,9 +1,9 @@
 /target
 /.vscode
-/env
 .env
 .DS_Store
-lgbm*
+lgbm.test
+lgbm.train
 *.txt
 /dataset
 gcp.json

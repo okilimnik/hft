@@ -21,21 +21,69 @@ lazy_static! {
     );
 }
 
-pub fn trade(data: Vec<OrderBookState>) {
-    let last_state = data.last().unwrap().clone();
-    let svm_row = utils::to_svm(0, data);
-    let prediction = lightgbm::predict(svm_row);
-    debug!("Prediction is {:.3}", prediction);
+fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
+    let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
+    let symbol: String = env::var("SYMBOL").unwrap();
+    let stop_profit_side = if matches!(order_side, OrderSide::Buy) {
+        OrderSide::Sell
+    } else {
+        OrderSide::Buy
+    };
+    ACCOUNT
+        .custom_order(
+            &symbol,
+            trade_amount,
+            price,
+            None,
+            order_side,
+            OrderType::Limit,
+            TimeInForce::GTC,
+            None,
+        )
+        .unwrap();
+    ACCOUNT
+        .custom_order(
+            &symbol,
+            trade_amount,
+            stop_profit,
+            None,
+            stop_profit_side,
+            OrderType::Limit,
+            TimeInForce::GTC,
+            None,
+        )
+        .unwrap();
+}
 
-    let symbol = env::var("SYMBOL").unwrap();
-    let quantity: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
+fn buy(price: f64) {
     let profit_value: f64 = env::var("PROFIT").unwrap().parse().unwrap();
-    let opened_orders = ACCOUNT.get_open_orders(&symbol).unwrap();
+    let order_side = OrderSide::Buy;
+    let stop_profit = price + profit_value;
+    open_order(price, stop_profit, order_side);
+}
+
+fn sell(price: f64) {
+    let profit_value: f64 = env::var("PROFIT").unwrap().parse().unwrap();
+    let order_side = OrderSide::Sell;
+    let stop_profit = price - profit_value;
+    open_order(price, stop_profit, order_side);
+}
+
+pub fn trade(data: Vec<OrderBookState>) {
+    let symbol: String = env::var("SYMBOL").unwrap();
+    let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
+
+    let opened_orders = ACCOUNT.get_open_orders(symbol).unwrap();
     if opened_orders.is_empty() {
+        let last_state = data.last().unwrap().clone();
+        let svm_row = utils::to_svm(0, data);
+        let prediction = lightgbm::predict(svm_row);
+        debug!("Prediction is {:.3}", prediction);
+
         let best_buy_price = last_state
             .asks
             .iter()
-            .filter(|x| *x.1 >= quantity)
+            .filter(|x| *x.1 >= trade_amount)
             .min_by_key(|x| x.0)
             .unwrap()
             .0
@@ -43,35 +91,16 @@ pub fn trade(data: Vec<OrderBookState>) {
         let best_sell_price = last_state
             .bids
             .iter()
-            .filter(|x| *x.1 >= quantity)
+            .filter(|x| *x.1 >= trade_amount)
             .max_by_key(|x| x.0)
             .unwrap()
             .0
             .to_owned() as f64;
-        ACCOUNT
-            .custom_order(
-                &symbol,
-                quantity,
-                best_buy_price,
-                None,
-                OrderSide::Buy,
-                OrderType::Limit,
-                TimeInForce::GTC,
-                None,
-            )
-            .unwrap();
-        ACCOUNT
-            .custom_order(
-                &symbol,
-                quantity,
-                best_buy_price + profit_value,
-                None,
-                OrderSide::Sell,
-                OrderType::Limit,
-                TimeInForce::GTC,
-                None,
-            )
-            .unwrap();
+        if prediction >= 0.9 {
+            buy(best_buy_price);
+        } else {
+            sell(best_sell_price);
+        }
     }
 
     // ACCOUNT.cancel_all_open_orders("WTCETH")
@@ -79,5 +108,3 @@ pub fn trade(data: Vec<OrderBookState>) {
     // account.get_balance("KNC")
     // account.cancel_order("WTCETH", order_id)
 }
-
-fn open_order() {}
