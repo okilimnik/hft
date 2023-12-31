@@ -3,6 +3,7 @@ use std::env;
 use binance::{
     account::{Account, OrderSide, OrderType, TimeInForce},
     api::Binance,
+    model::Transaction,
 };
 use image::open;
 use itertools::Itertools;
@@ -19,6 +20,25 @@ lazy_static! {
         env::var("BINANCE_API_KEY").ok(),
         env::var("BINANCE_SECRET").ok()
     );
+}
+
+fn open_stop_profit_order(symbol: &str, qty: f64, price: f64, order_side: OrderSide) {
+    debug!("started trading");
+    match ACCOUNT.custom_order(
+        symbol,
+        qty,
+        price,
+        None,
+        order_side,
+        OrderType::Limit,
+        TimeInForce::GTC,
+        None,
+    ) {
+        Ok(_) => {
+            debug!("opened a STOP PROFIT order");
+        }
+        Err(e) => debug!("opening stop profit error {:?}", e),
+    }
 }
 
 fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
@@ -39,22 +59,16 @@ fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
         TimeInForce::GTC,
         None,
     ) {
-        Ok(_) => {
-            debug!("started trading");
-            match ACCOUNT.custom_order(
-                &symbol,
-                trade_amount - 0.00001,
-                stop_profit,
-                None,
-                stop_profit_side,
-                OrderType::Limit,
-                TimeInForce::GTC,
-                None,
-            ) {
-                Ok(_) => {
-                    debug!("opened a STOP PROFIT order");
+        Ok(tx) => {
+            if tx.status == "FILLED" {
+                open_stop_profit_order(&symbol, trade_amount, stop_profit, stop_profit_side)
+            } else {
+                match ACCOUNT.cancel_order(&symbol, tx.order_id) {
+                    Ok(_) => debug!("Canceled opening an order"),
+                    Err(_) => {
+                        open_stop_profit_order(&symbol, trade_amount, stop_profit, stop_profit_side)
+                    }
                 }
-                Err(e) => debug!("opening stop profit error {:?}", e),
             }
         }
         Err(e) => debug!("start trading error {:?}", e),
