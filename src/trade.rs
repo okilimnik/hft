@@ -29,30 +29,36 @@ fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
     } else {
         OrderSide::Buy
     };
-    ACCOUNT
-        .custom_order(
-            &symbol,
-            trade_amount,
-            price,
-            None,
-            order_side,
-            OrderType::Limit,
-            TimeInForce::GTC,
-            None,
-        )
-        .unwrap();
-    ACCOUNT
-        .custom_order(
-            &symbol,
-            trade_amount,
-            stop_profit,
-            None,
-            stop_profit_side,
-            OrderType::Limit,
-            TimeInForce::GTC,
-            None,
-        )
-        .unwrap();
+    match ACCOUNT.custom_order(
+        &symbol,
+        trade_amount,
+        price,
+        None,
+        order_side,
+        OrderType::Limit,
+        TimeInForce::GTC,
+        None,
+    ) {
+        Ok(_) => {
+            debug!("started trading");
+            match ACCOUNT.custom_order(
+                &symbol,
+                trade_amount - 0.00001,
+                stop_profit,
+                None,
+                stop_profit_side,
+                OrderType::Limit,
+                TimeInForce::GTC,
+                None,
+            ) {
+                Ok(_) => {
+                    debug!("opened a STOP PROFIT order");
+                }
+                Err(e) => debug!("opening stop profit error {:?}", e),
+            }
+        }
+        Err(e) => debug!("start trading error {:?}", e),
+    };
 }
 
 fn buy(price: f64) {
@@ -72,13 +78,14 @@ fn sell(price: f64) {
 pub fn trade(data: Vec<OrderBookState>) {
     let symbol: String = env::var("SYMBOL").unwrap();
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
+    let prediction_threshold: f64 = env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
 
     let opened_orders = ACCOUNT.get_open_orders(symbol).unwrap();
     if opened_orders.is_empty() {
         let last_state = data.last().unwrap().clone();
-        let svm_row = utils::to_svm(0, data);
+        let svm_row = utils::to_svm(1, data);
         let prediction = lightgbm::predict(svm_row);
-        debug!("Prediction is {:.3}", prediction);
+        debug!("Prediction is {:.2}", prediction);
 
         let best_buy_price = last_state
             .asks
@@ -96,9 +103,10 @@ pub fn trade(data: Vec<OrderBookState>) {
             .unwrap()
             .0
             .to_owned() as f64;
-        if prediction >= 0.9 {
+        if prediction >= prediction_threshold {
             buy(best_buy_price);
-        } else {
+        }
+        if prediction <= 1f64 - prediction_threshold {
             sell(best_sell_price);
         }
     }

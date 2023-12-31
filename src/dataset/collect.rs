@@ -168,9 +168,10 @@ fn run_producer() {
                 .unwrap()
                 .as_millis();
         } else {
-            thread::sleep(Duration::from_millis(
-                (DATA_FETCH_INTERVAL - delta).try_into().unwrap(),
-            ));
+            let interval = DATA_FETCH_INTERVAL as i64 - delta as i64;
+            if interval > 0 {
+                thread::sleep(Duration::from_millis(interval.try_into().unwrap()));
+            }
         }
     }
 }

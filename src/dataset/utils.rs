@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use log::debug;
 use rand::{seq::SliceRandom, thread_rng};
 use std::fs::{read_to_string, OpenOptions};
 use std::io::Write;
@@ -38,7 +39,13 @@ pub fn split() {
         .rev()
         .take((count * 0.25) as usize)
         .map(|x| {
-            to_file("./lgbm.test", x.to_owned(), true);
+            let mut label = x[0..2].to_string();
+            let mut data = x.to_owned();
+            if label == "-1" {
+                label = "0".to_string();
+                data = label + &x[2..x.len()];
+            };
+            to_file("./lgbm.test", data, true);
         })
         .collect_vec();
 }
@@ -61,14 +68,9 @@ pub fn to_svm(label: i64, data: Vec<OrderBookState>) -> String {
         .min()
         .unwrap()
         .to_owned();
-    let label_str = if label == 0 {
-        "".to_string()
-    } else {
-        label.to_string()
-    };
     data.iter()
         .enumerate()
-        .fold(label_str, |acc, (i, state)| -> String {
+        .fold(label.to_string(), |acc, (i, state)| -> String {
             (0..10).fold(acc, |acc, j| -> String {
                 let quantity = *state
                     .bids
@@ -80,11 +82,10 @@ pub fn to_svm(label: i64, data: Vec<OrderBookState>) -> String {
                         .clone()
                         .entry(get_price_by_index(j, price_that_matters))
                         .or_insert(0f64);
-                let start_str = if acc.len() == 0 { acc } else { acc + " " };
                 if quantity >= QUANTITY_THRESHOLD {
-                    start_str + &((i * 10) + j + 1).to_string() + ":" + &format!("{:.4}", quantity)
+                    acc + " " + &((i * 10) + j + 1).to_string() + ":" + &format!("{:.4}", quantity)
                 } else {
-                    start_str
+                    acc
                 }
             })
         })

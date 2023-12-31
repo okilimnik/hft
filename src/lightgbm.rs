@@ -1,6 +1,10 @@
-use std::{fs::read_to_string, process::Command};
+use log::debug;
 
 use crate::dataset::utils::to_file;
+use std::{
+    fs::{self, read_to_string},
+    process::Command,
+};
 
 pub fn train() {
     let output = Command::new("lightgbm")
@@ -11,14 +15,17 @@ pub fn train() {
 }
 
 pub fn predict(data: String) -> f64 {
-    to_file("./lgbm.predict.txt", data, false);
+    let _ = fs::remove_file("./lgbm.predict");
+    let _ = fs::remove_file("./lgbm.prediction");
+    to_file("./lgbm.predict", data, false);
     let output = Command::new("lightgbm")
         .arg("config=lgbm.predict.conf")
         .output()
         .expect("Failed to execute command");
     println!("{}", String::from_utf8_lossy(&output.stdout));
-    read_to_string("./lgbm.prediction.txt")
+    let string_result = read_to_string("./lgbm.prediction")
         .unwrap()
-        .parse()
-        .unwrap()
+        .trim()
+        .to_string();
+    string_result.parse().unwrap()
 }

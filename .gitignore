@@ -4,6 +4,9 @@
 .DS_Store
 lgbm.test
 lgbm.train
+lgbm.predict
+lgbm.prediction
+lgbm.model.txt
 *.txt
 /dataset
 gcp.json
