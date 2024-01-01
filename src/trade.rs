@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, time::Duration};
 
 use binance::{
     account::{Account, OrderSide, OrderType, TimeInForce},
@@ -9,11 +9,16 @@ use image::open;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::debug;
+use std::thread;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use crate::{
     dataset::{order_book::OrderBookState, utils},
     lightgbm,
 };
+
+const WAIT_ORDER_FILL: u128 = 1000;
 
 lazy_static! {
     static ref ACCOUNT: Account = Binance::new(
@@ -22,22 +27,63 @@ lazy_static! {
     );
 }
 
-fn open_stop_profit_order(symbol: &str, qty: f64, price: f64, order_side: OrderSide) {
-    debug!("started trading");
-    match ACCOUNT.custom_order(
-        symbol,
-        qty,
-        price,
-        None,
-        order_side,
-        OrderType::Limit,
-        TimeInForce::GTC,
-        None,
-    ) {
-        Ok(_) => {
-            debug!("opened a STOP PROFIT order");
+fn open_stop_profit_order(
+    main_order_id: u64,
+    symbol: &str,
+    qty: f64,
+    price: f64,
+    order_side: OrderSide,
+) {
+    let t: u128 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    loop {
+        thread::sleep(Duration::from_millis(100));
+        let delta: u128 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            - t;
+        let stop_profit_side = if matches!(order_side, OrderSide::Buy) {
+            OrderSide::Buy
+        } else {
+            OrderSide::Sell
+        };
+        if delta >= WAIT_ORDER_FILL {
+            match ACCOUNT.cancel_order(symbol, main_order_id) {
+                Ok(_) => debug!("Canceled opening an order"),
+                Err(_) => {
+                    open_stop_profit_order(main_order_id, symbol, qty, price, stop_profit_side)
+                }
+            }
+            break;
+        } else {
+            match ACCOUNT.order_status(symbol, main_order_id) {
+                Ok(order) => {
+                    debug!("Order status: {}", order.status);
+                    if order.status == "FILLED" {
+                        debug!("started trading");
+                        match ACCOUNT.custom_order(
+                            symbol,
+                            qty,
+                            price,
+                            None,
+                            stop_profit_side,
+                            OrderType::Limit,
+                            TimeInForce::GTC,
+                            None,
+                        ) {
+                            Ok(_) => {
+                                debug!("opened a STOP PROFIT order");
+                            }
+                            Err(e) => debug!("opening stop profit error {:?}", e),
+                        }
+                    }
+                }
+                Err(_) => debug!("Cannot query order status"),
+            }
         }
-        Err(e) => debug!("opening stop profit error {:?}", e),
     }
 }
 
@@ -59,18 +105,13 @@ fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
         TimeInForce::GTC,
         None,
     ) {
-        Ok(tx) => {
-            if tx.status == "FILLED" {
-                open_stop_profit_order(&symbol, trade_amount, stop_profit, stop_profit_side)
-            } else {
-                match ACCOUNT.cancel_order(&symbol, tx.order_id) {
-                    Ok(_) => debug!("Canceled opening an order"),
-                    Err(_) => {
-                        open_stop_profit_order(&symbol, trade_amount, stop_profit, stop_profit_side)
-                    }
-                }
-            }
-        }
+        Ok(tx) => open_stop_profit_order(
+            tx.order_id,
+            &symbol,
+            trade_amount,
+            stop_profit,
+            stop_profit_side,
+        ),
         Err(e) => debug!("start trading error {:?}", e),
     };
 }
