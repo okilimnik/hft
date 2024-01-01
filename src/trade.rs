@@ -25,7 +25,7 @@ use crate::{
     lightgbm,
 };
 
-const WAIT_ORDER_FILL: u128 = 10000;
+const WAIT_ORDER_FILL: u128 = 15000;
 
 lazy_static! {
     static ref ACCOUNT: Account = Binance::new(
@@ -47,7 +47,7 @@ fn open_stop_profit_order(
         .unwrap()
         .as_millis();
     loop {
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(1000));
         let delta: u128 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

@@ -22,7 +22,7 @@ pub fn predict(data: String) -> f64 {
         .arg("config=lgbm.predict.conf")
         .output()
         .expect("Failed to execute command");
-    println!("{}", String::from_utf8_lossy(&output.stdout));
+    //println!("{}", String::from_utf8_lossy(&output.stdout));
     let string_result = read_to_string("./lgbm.prediction")
         .unwrap()
         .trim()
