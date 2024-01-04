@@ -1,9 +1,6 @@
 use std::{
     env,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -25,7 +22,7 @@ use crate::{
     lightgbm,
 };
 
-const WAIT_ORDER_FILL: u128 = 15000;
+const WAIT_ORDER_FILL: u128 = 10000;
 
 lazy_static! {
     static ref ACCOUNT: Account = Binance::new(
