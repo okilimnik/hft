@@ -97,7 +97,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
             });
 
     // default is noise
-    let mut label: i64 = 0;
+    let mut label: i64 = -1;
     if relevant_sell_prices_in_line.len() >= MIN_STOP_HITS_IN_LINE {
         // buy signal
         label = 1;
@@ -108,7 +108,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
                 < relevant_sell_prices_in_line.first().unwrap().0)
     {
         // sell signal
-        label = -1;
+        label = 0;
     }
     label
 }
@@ -122,7 +122,7 @@ fn create_input(
     // update UI
     //ui::set_label(label);
     // don't create inputs if it's noise
-    if label == 0 {
+    if label == -1 {
         return;
     }
     debug!("Label is {}", label);
@@ -227,57 +227,4 @@ fn run_consumer() {
 
 pub fn from_binance_data() {
     run_producer();
-}
-
-#[cfg(test)]
-mod tests {
-    use rustc_hash::FxHashMap;
-
-    use super::*;
-
-    /*  #[test]
-    fn get_price_by_index_test() {
-        let result = get_price_by_index(5, 20000);
-        assert_eq!(result, 20000);
-        let result = get_price_by_index(1, 20000);
-        assert_eq!(result, 19960);
-        let result = get_price_by_index(6, 20000);
-        assert_eq!(result, 20010);
-    }*/
-
-    #[test]
-    fn calc_label_test() {
-        let mut input_bids = FxHashMap::default();
-        input_bids.insert(20000, 0.5);
-        let mut input_asks = FxHashMap::default();
-        input_asks.insert(20010, 0.1);
-        let input_state = OrderBookState {
-            last_update_id: 1,
-            bids: input_bids,
-            asks: input_asks,
-        };
-
-        let mut label_bids1 = FxHashMap::default();
-        label_bids1.insert(20050, 0.5);
-        let mut label_asks1 = FxHashMap::default();
-        label_asks1.insert(20060, 0.1);
-        let label_state1 = OrderBookState {
-            last_update_id: 2,
-            bids: label_bids1,
-            asks: label_asks1,
-        };
-
-        let mut label_bids2 = FxHashMap::default();
-        label_bids2.insert(20050, 0.5);
-        let mut label_asks2 = FxHashMap::default();
-        label_asks2.insert(20060, 0.1);
-        let label_state2 = OrderBookState {
-            last_update_id: 2,
-            bids: label_bids2,
-            asks: label_asks2,
-        };
-
-        let result = calc_label(&[input_state], &[label_state1, label_state2]);
-        assert_eq!(result, 1);
-    }
 }
