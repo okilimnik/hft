@@ -20,9 +20,9 @@ use crate::trade;
 use crate::ui;
 
 const HISTORY_SIZE: usize = 60;
-const PREDICTION_HEAD: usize = 15;
+const PREDICTION_HEAD: usize = 20;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
-const MIN_STOP_HITS_IN_LINE: usize = 5; // how many states in line reach price we need to close order at
+const ORDER_FILL_TIME_SEC: usize = 5;
 const DATA_FETCH_INTERVAL_MILLIS: u128 = 1000;
 const PRICE_PRECISION: i64 = 10;
 const TRAINING_TRADE_AMOUNT: f64 = 0.1;
@@ -34,19 +34,52 @@ lazy_static! {
 fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
     let profit_value = env::var("PROFIT").unwrap().parse().unwrap();
     let last_input = input_series.last().unwrap();
-    let buy_price = last_input
+    let opening_order_series = label_series.iter().take(ORDER_FILL_TIME_SEC).collect_vec();
+    let opening_order_interval_min_buy_price = opening_order_series
+        .iter()
+        .map(|x| {
+            x.asks
+                .iter()
+                .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
+                .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+                .find_or_first(|x| true)
+                .unwrap()
+                .price
+                .to_owned()
+        })
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let opening_order_interval_max_sell_price = opening_order_series
+        .iter()
+        .map(|x| {
+            x.bids
+                .iter()
+                .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
+                .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+                .find_or_last(|x| true)
+                .unwrap()
+                .price
+                .to_owned()
+        })
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let durable_buy_price = last_input
         .asks
         .iter()
-        .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
+        .filter(|x| {
+            x.qty >= TRAINING_TRADE_AMOUNT && x.price >= opening_order_interval_min_buy_price
+        })
         .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
         .find_or_first(|x| true)
         .unwrap()
         .price
         .to_owned();
-    let sell_price = last_input
+    let durable_sell_price = last_input
         .bids
         .iter()
-        .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
+        .filter(|x| {
+            x.qty >= TRAINING_TRADE_AMOUNT && x.price <= opening_order_interval_max_sell_price
+        })
         .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
         .find_or_last(|x| true)
         .unwrap()
@@ -54,6 +87,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
         .to_owned();
     let future_best_buy_prices = label_series
         .iter()
+        .skip(ORDER_FILL_TIME_SEC)
         .map(|state| -> f64 {
             state
                 .asks
@@ -68,6 +102,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
         .collect_vec();
     let future_best_sell_prices = label_series
         .iter()
+        .skip(ORDER_FILL_TIME_SEC)
         .map(|state| -> f64 {
             state
                 .bids
@@ -80,22 +115,22 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
                 .to_owned()
         })
         .collect_vec();
-    let relevant_buy_prices_in_line =
+    let relevant_buy_prices =
         future_best_buy_prices
             .iter()
             .enumerate()
             .fold(vec![], |mut acc, (i, x)| {
-                if (sell_price - x) >= profit_value {
+                if (durable_sell_price - x) >= profit_value {
                     acc.push((i, *x));
                 }
                 acc
             });
-    let relevant_sell_prices_in_line =
+    let relevant_sell_prices =
         future_best_sell_prices
             .iter()
             .enumerate()
             .fold(vec![], |mut acc, (i, x)| {
-                if (x - buy_price) >= profit_value {
+                if (x - durable_buy_price) >= profit_value {
                     acc.push((i, *x));
                 }
                 acc
@@ -103,14 +138,13 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
 
     // default is noise
     let mut label: i64 = -1;
-    if relevant_sell_prices_in_line.len() >= MIN_STOP_HITS_IN_LINE {
+    if relevant_sell_prices.len() > 0 {
         // buy signal
         label = 1;
     }
-    if relevant_buy_prices_in_line.len() >= MIN_STOP_HITS_IN_LINE
-        && (relevant_sell_prices_in_line.is_empty()
-            || relevant_buy_prices_in_line.first().unwrap().0
-                < relevant_sell_prices_in_line.first().unwrap().0)
+    if relevant_buy_prices.len() > 0
+        && (relevant_sell_prices.is_empty()
+            || relevant_buy_prices.first().unwrap().0 < relevant_sell_prices.first().unwrap().0)
     {
         // sell signal
         label = 0;

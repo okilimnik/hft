@@ -32,3 +32,12 @@ CMD RUST_LOG=debug /usr/local/bin/neusa --task trade
 # cargo run
 # cargo run -- --task split
 # cargo run -- --task train
+
+# https://api.binance.com California, USA
+# https://api-gcp.binance.com Missouri, USA
+
+# asia-northeast1 (Tokyo)
+# https://api1.binance.com Tokyo, Japan
+# https://api2.binance.com Tokyo, Japan
+# https://api3.binance.com Tokyo, Japan
+# https://api4.binance.com Tokyo, Japan
