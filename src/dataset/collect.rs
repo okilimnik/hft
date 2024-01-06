@@ -25,6 +25,7 @@ const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
 const MIN_STOP_HITS_IN_LINE: usize = 5; // how many states in line reach price we need to close order at
 const DATA_FETCH_INTERVAL_MILLIS: u128 = 1000;
 const PRICE_PRECISION: i64 = 10;
+const TRAINING_TRADE_AMOUNT: f64 = 0.1;
 
 lazy_static! {
     static ref MARKET: Market = Binance::new(None, None);
@@ -36,6 +37,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
     let buy_price = last_input
         .asks
         .iter()
+        .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
         .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
         .find_or_first(|x| true)
         .unwrap()
@@ -44,6 +46,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
     let sell_price = last_input
         .bids
         .iter()
+        .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
         .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
         .find_or_last(|x| true)
         .unwrap()
@@ -55,6 +58,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
             state
                 .asks
                 .iter()
+                .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
                 .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
                 .find_or_first(|x| true)
                 .unwrap()
@@ -68,6 +72,7 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
             state
                 .bids
                 .iter()
+                .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
                 .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
                 .find_or_last(|x| true)
                 .unwrap()
@@ -163,6 +168,7 @@ fn run_producer() {
                 new_order_book.bids,
                 new_order_book.asks,
                 PRICE_PRECISION,
+                TRAINING_TRADE_AMOUNT,
             ));
             if series_with_precision.len() > ORDER_BOOK_QUEUE_SIZE {
                 series_with_precision.pop_front();

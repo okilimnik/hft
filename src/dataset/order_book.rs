@@ -15,6 +15,7 @@ impl OrderBookState {
         bids_vec: Vec<Bids>,
         asks_vec: Vec<Asks>,
         precision: i64,
+        qty_filter: f64,
     ) -> OrderBookState {
         let mut bids_map: FxHashMap<i64, f64> = FxHashMap::default();
         for bid in bids_vec.iter().map(|x| {
@@ -27,6 +28,7 @@ impl OrderBookState {
         }
         let bids: FxHashMap<i64, f64> = bids_map
             .iter()
+            .filter(|x| *x.1 >= qty_filter)
             .sorted_by_key(|a| a.0)
             .rev()
             .take(50)
@@ -44,6 +46,7 @@ impl OrderBookState {
         }
         let asks: FxHashMap<i64, f64> = asks_map
             .iter()
+            .filter(|x| *x.1 >= qty_filter)
             .sorted_by_key(|a| a.0)
             .take(50)
             .map(|a| (a.0.to_owned(), a.1.to_owned()))
