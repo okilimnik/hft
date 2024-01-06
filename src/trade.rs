@@ -7,7 +7,7 @@ use std::{
 use binance::{
     account::{Account, OrderSide, OrderType, TimeInForce},
     api::Binance,
-    model::Transaction,
+    model::{OrderBook, Transaction},
 };
 use image::open;
 use itertools::Itertools;
@@ -122,56 +122,58 @@ fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
     };
 }
 
-fn buy(price: f64) {
+fn buy(last_state: OrderBook) {
+    let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
+    let best_buy_price = last_state
+        .asks
+        .iter()
+        .filter(|x| x.price >= trade_amount)
+        .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+        .find_or_first(|x| true)
+        .unwrap()
+        .price
+        .to_owned();
     let profit_value: f64 = env::var("PROFIT").unwrap().parse().unwrap();
     let order_side = OrderSide::Buy;
-    let stop_profit = price + profit_value;
-    open_order(price, stop_profit, order_side);
+    let stop_profit = best_buy_price + profit_value;
+    open_order(best_buy_price, stop_profit, order_side);
 }
 
-fn sell(price: f64) {
+fn sell(last_state: OrderBook) {
+    let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
+    let best_sell_price = last_state
+        .bids
+        .iter()
+        .filter(|x| x.qty >= trade_amount)
+        .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+        .find_or_last(|x| true)
+        .unwrap()
+        .price
+        .to_owned();
     let profit_value: f64 = env::var("PROFIT").unwrap().parse().unwrap();
     let order_side = OrderSide::Sell;
-    let stop_profit = price - profit_value;
-    open_order(price, stop_profit, order_side);
+    let stop_profit = best_sell_price - profit_value;
+    open_order(best_sell_price, stop_profit, order_side);
 }
 
-pub fn trade(data: Vec<OrderBookState>) {
+pub fn trade(raw_series: Vec<OrderBook>, series_with_precision: Vec<OrderBookState>) {
     let symbol: String = env::var("SYMBOL").unwrap();
     if TRADING.load(Ordering::SeqCst) || !ACCOUNT.get_open_orders(symbol).unwrap().is_empty() {
         return;
     }
     TRADING.store(true, Ordering::SeqCst);
     thread::spawn(|| {
-        let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
         let prediction_threshold: f64 = env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
 
-        let last_state = data.last().unwrap().clone();
-        let svm_row = utils::to_svm(1, data);
+        let svm_row = utils::to_svm(1, series_with_precision);
         let prediction = lightgbm::predict(svm_row);
         debug!("Prediction is {:.2}", prediction);
 
-        let best_buy_price = last_state
-            .asks
-            .iter()
-            .filter(|x| *x.1 >= trade_amount)
-            .min_by_key(|x| x.0)
-            .unwrap()
-            .0
-            .to_owned() as f64;
-        let best_sell_price = last_state
-            .bids
-            .iter()
-            .filter(|x| *x.1 >= trade_amount)
-            .max_by_key(|x| x.0)
-            .unwrap()
-            .0
-            .to_owned() as f64;
         if prediction >= prediction_threshold {
-            buy(best_buy_price);
+            buy(raw_series.last().unwrap().clone());
         }
         if prediction <= 1f64 - prediction_threshold {
-            sell(best_sell_price);
+            sell(raw_series.last().unwrap().clone());
         }
         TRADING.store(false, Ordering::SeqCst);
     });

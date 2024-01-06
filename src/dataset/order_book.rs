@@ -10,12 +10,19 @@ pub struct OrderBookState {
 }
 
 impl OrderBookState {
-    pub fn from(last_update_id: u64, bids_vec: Vec<Bids>, asks_vec: Vec<Asks>) -> OrderBookState {
+    pub fn with_precision(
+        last_update_id: u64,
+        bids_vec: Vec<Bids>,
+        asks_vec: Vec<Asks>,
+        precision: i64,
+    ) -> OrderBookState {
         let mut bids_map: FxHashMap<i64, f64> = FxHashMap::default();
-        for bid in bids_vec
-            .iter()
-            .map(|x| ((x.price / 10.0).floor() as i64 * 10, x.qty))
-        {
+        for bid in bids_vec.iter().map(|x| {
+            (
+                (x.price / precision as f64).floor() as i64 * precision,
+                x.qty,
+            )
+        }) {
             *bids_map.entry(bid.0).or_insert(0f64) += bid.1;
         }
         let bids: FxHashMap<i64, f64> = bids_map
@@ -27,10 +34,12 @@ impl OrderBookState {
             .collect();
 
         let mut asks_map: FxHashMap<i64, f64> = FxHashMap::default();
-        for ask in asks_vec
-            .iter()
-            .map(|x| ((x.price / 10.0).floor() as i64 * 10, x.qty))
-        {
+        for ask in asks_vec.iter().map(|x| {
+            (
+                (x.price / precision as f64).floor() as i64 * precision,
+                x.qty,
+            )
+        }) {
             *asks_map.entry(ask.0).or_insert(0f64) += ask.1;
         }
         let asks: FxHashMap<i64, f64> = asks_map
@@ -45,32 +54,5 @@ impl OrderBookState {
             asks,
             last_update_id,
         }
-    }
-
-    pub fn merge(&mut self, updates: OrderBookState) {
-        for entry in updates.bids.iter() {
-            *self.bids.entry(*entry.0).or_insert(0f64) = *entry.1;
-        }
-        self.bids = self
-            .bids
-            .iter()
-            .filter(|x| *x.1 > 0f64)
-            .sorted_by_key(|a| a.0)
-            .rev()
-            .take(50)
-            .map(|a| (a.0.to_owned(), a.1.to_owned()))
-            .collect();
-        for entry in updates.asks.iter() {
-            *self.asks.entry(*entry.0).or_insert(0f64) = *entry.1;
-        }
-        self.asks = self
-            .asks
-            .iter()
-            .filter(|x| *x.1 > 0f64)
-            .sorted_by_key(|a| a.0)
-            .rev()
-            .take(50)
-            .map(|a| (a.0.to_owned(), a.1.to_owned()))
-            .collect();
     }
 }
