@@ -7,6 +7,7 @@ use std::{
 use binance::{
     account::{Account, OrderSide, OrderType, TimeInForce},
     api::Binance,
+    config::Config,
     model::{OrderBook, Transaction},
 };
 use image::open;
@@ -25,9 +26,10 @@ use crate::{
 const WAIT_ORDER_FILL: u128 = 10000;
 
 lazy_static! {
-    static ref ACCOUNT: Account = Binance::new(
+    static ref ACCOUNT: Account = Binance::new_with_config(
         env::var("BINANCE_API_KEY").ok(),
-        env::var("BINANCE_SECRET").ok()
+        env::var("BINANCE_SECRET").ok(),
+        &Config::default().set_rest_api_endpoint("https://api1.binance.com")
     );
     static ref TRADING: AtomicBool = AtomicBool::new(false);
 }
@@ -162,7 +164,7 @@ pub fn trade(raw_series: Vec<OrderBook>, series_with_precision: Vec<OrderBookSta
         return;
     }
     TRADING.store(true, Ordering::SeqCst);
-    thread::spawn(|| {
+    thread::spawn(move || {
         let prediction_threshold: f64 = env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
 
         let svm_row = utils::to_svm(1, series_with_precision);

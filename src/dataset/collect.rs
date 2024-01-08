@@ -1,7 +1,7 @@
 use binance::api::Binance;
+use binance::config::Config;
 use binance::market::Market;
 use binance::model::OrderBook;
-use itertools::Itertools;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::debug;
@@ -28,7 +28,11 @@ const PRICE_PRECISION: i64 = 10;
 const TRAINING_TRADE_AMOUNT: f64 = 0.1;
 
 lazy_static! {
-    static ref MARKET: Market = Binance::new(None, None);
+    static ref MARKET: Market = Binance::new_with_config(
+        None,
+        None,
+        &Config::default().set_rest_api_endpoint("https://api1.binance.com")
+    );
 }
 
 fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
