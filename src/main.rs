@@ -17,11 +17,13 @@ struct Args {
 fn main() {
     dotenv().ok();
     env_logger::init();
-    let args = Args::parse();
-
-    match args.task.as_str() {
-        "split" => dataset::utils::split(),
-        "train" => lightgbm::train(),
-        _ => dataset::collect::from_binance_data(),
+    let args = Args::try_parse();
+    match args {
+        Ok(command) => match command.task.as_str() {
+            "split" => dataset::utils::split(),
+            "train" => lightgbm::train(),
+            _ => println!("Unknown task, exiting..."),
+        },
+        Err(_) => dataset::collect::from_binance_data(),
     };
 }

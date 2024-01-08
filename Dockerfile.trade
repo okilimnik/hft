@@ -27,7 +27,7 @@ RUN apt-get update && \
 WORKDIR /usr/src/neusa
 COPY . .
 RUN cargo install --path .
-CMD neusa --task trade
+CMD neusa
 
 # docker build -f Dockerfile.trade -t neusa-trade .
 # docker tag neusa-trade asia-northeast1-docker.pkg.dev/neusa-a919b/neusa/neusa-trade:latest

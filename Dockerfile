@@ -23,7 +23,7 @@ RUN apk add --update openssl \
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/neusa /usr/local/bin/
 COPY . .
 #USER myuser
-CMD RUST_LOG=debug /usr/local/bin/neusa --task trade
+CMD RUST_LOG=debug /usr/local/bin/neusa
 
 # docker build -t neusa .
 # docker tag neusa asia-northeast1-docker.pkg.dev/neusa-a919b/neusa/neusa-hft:latest

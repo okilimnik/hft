@@ -42,81 +42,89 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
     let opening_order_interval_min_buy_price = opening_order_series
         .iter()
         .map(|x| {
-            x.asks
+            *x.asks
                 .iter()
                 .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
-                .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-                .find_or_first(|x| true)
-                .unwrap()
-                .price
-                .to_owned()
+                .map(|x| x.price)
+                .sorted_by(|a, b| a.partial_cmp(b).unwrap())
+                .collect_vec()
+                .first()
+                .unwrap_or(&0f64)
         })
+        .filter(|x| *x > 0f64)
         .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
+        .unwrap_or(0f64);
     let opening_order_interval_max_sell_price = opening_order_series
         .iter()
         .map(|x| {
-            x.bids
+            *x.bids
                 .iter()
                 .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
-                .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-                .find_or_last(|x| true)
-                .unwrap()
-                .price
-                .to_owned()
+                .map(|x| x.price)
+                .sorted_by(|a, b| a.partial_cmp(b).unwrap())
+                .collect_vec()
+                .last()
+                .unwrap_or(&0f64)
         })
+        .filter(|x| *x > 0f64)
         .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let durable_buy_price = last_input
-        .asks
-        .iter()
-        .filter(|x| {
-            x.qty >= TRAINING_TRADE_AMOUNT && x.price >= opening_order_interval_min_buy_price
-        })
-        .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-        .find_or_first(|x| true)
-        .unwrap()
-        .price
-        .to_owned();
-    let durable_sell_price = last_input
-        .bids
-        .iter()
-        .filter(|x| {
-            x.qty >= TRAINING_TRADE_AMOUNT && x.price <= opening_order_interval_max_sell_price
-        })
-        .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-        .find_or_last(|x| true)
-        .unwrap()
-        .price
-        .to_owned();
+        .unwrap_or(0f64);
+    let mut durable_buy_price = 0f64;
+    if opening_order_interval_min_buy_price > 0f64 {
+        durable_buy_price = *last_input
+            .asks
+            .iter()
+            .filter(|x| {
+                x.qty >= TRAINING_TRADE_AMOUNT && x.price >= opening_order_interval_min_buy_price
+            })
+            .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+            .map(|x| x.price)
+            .collect_vec()
+            .first()
+            .unwrap_or(&0f64);
+    }
+    let mut durable_sell_price = 0f64;
+    if opening_order_interval_max_sell_price > 0f64 {
+        durable_sell_price = *last_input
+            .bids
+            .iter()
+            .filter(|x| {
+                x.qty >= TRAINING_TRADE_AMOUNT && x.price <= opening_order_interval_max_sell_price
+            })
+            .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
+            .map(|x| x.price)
+            .collect_vec()
+            .last()
+            .unwrap_or(&0f64);
+    }
     let future_best_buy_prices = label_series
         .iter()
         .skip(ORDER_FILL_TIME_SEC)
         .map(|state| -> f64 {
-            state
+            *state
                 .asks
                 .iter()
                 .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
                 .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-                .find_or_first(|x| true)
-                .unwrap()
-                .price
-                .to_owned()
+                .map(|x| x.price)
+                .collect_vec()
+                .first()
+                .unwrap_or(&0f64)
         })
         .collect_vec();
     let future_best_sell_prices = label_series
         .iter()
         .skip(ORDER_FILL_TIME_SEC)
         .map(|state| -> f64 {
-            state
+            *state
                 .bids
                 .iter()
                 .filter(|x| x.qty >= TRAINING_TRADE_AMOUNT)
                 .sorted_by(|a, b| a.price.partial_cmp(&b.price).unwrap())
-                .find_or_last(|x| true)
-                .unwrap()
-                .price
-                .to_owned()
+                .map(|x| x.price)
+                .collect_vec()
+                .last()
+                .unwrap_or(&0f64)
         })
         .collect_vec();
     let relevant_buy_prices =
@@ -124,7 +132,10 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
             .iter()
             .enumerate()
             .fold(vec![], |mut acc, (i, x)| {
-                if (durable_sell_price - x) >= profit_value {
+                if durable_sell_price > 0f64
+                    && *x > 0f64
+                    && (durable_sell_price - x) >= profit_value
+                {
                     acc.push((i, *x));
                 }
                 acc
@@ -134,7 +145,8 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
             .iter()
             .enumerate()
             .fold(vec![], |mut acc, (i, x)| {
-                if (x - durable_buy_price) >= profit_value {
+                if durable_buy_price > 0f64 && *x > 0f64 && (x - durable_buy_price) >= profit_value
+                {
                     acc.push((i, *x));
                 }
                 acc
@@ -142,11 +154,11 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
 
     // default is noise
     let mut label: i64 = -1;
-    if relevant_sell_prices.len() > 0 {
+    if !relevant_sell_prices.is_empty() {
         // buy signal
         label = 1;
     }
-    if relevant_buy_prices.len() > 0
+    if !relevant_buy_prices.is_empty()
         && (relevant_sell_prices.is_empty()
             || relevant_buy_prices.first().unwrap().0 < relevant_sell_prices.first().unwrap().0)
     {
