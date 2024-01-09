@@ -13,10 +13,8 @@ pub fn create_file(filename: String, filepath: String) {
     for byte in File::open(&filepath).unwrap().bytes() {
         bytes.push(byte.unwrap())
     }
-    let mut prefixed_path = "svm/".to_string();
-    prefixed_path.push_str(&filename);
     let object = STORAGE.object();
-    let create_object = object.create("neusa-datasets", bytes, &prefixed_path, "image/png");
+    let create_object = object.create("neusa-lgbm", bytes, &filename, "text/plain");
     if let Err(e) = RUNTIME.block_on(create_object) {
         eprintln!("Couldn't write to cloud storage: {}", e);
     };

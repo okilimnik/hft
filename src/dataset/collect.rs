@@ -19,11 +19,11 @@ use crate::gcp;
 use crate::trade;
 use crate::ui;
 
-const HISTORY_SIZE: usize = 60;
-const PREDICTION_HEAD: usize = 20;
+const HISTORY_SIZE: usize = 24;
+const PREDICTION_HEAD: usize = 8;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
-const ORDER_FILL_TIME_SEC: usize = 5;
-const DATA_FETCH_INTERVAL_MILLIS: u128 = 1000;
+const ORDER_FILL_TIME_SEC: usize = 2;
+const DATA_FETCH_INTERVAL_MILLIS: u128 = 2500;
 const PRICE_PRECISION: i64 = 10;
 const TRAINING_TRADE_AMOUNT: f64 = 0.1;
 
@@ -198,12 +198,13 @@ fn run_producer() {
         .unwrap()
         .as_millis();
     loop {
-        let delta: u128 = SystemTime::now()
+        let current_t = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_millis()
-            - t;
-        if delta >= DATA_FETCH_INTERVAL_MILLIS {
+            .as_millis();
+        if current_t >= t {
+            //debug!("fetching data at {}", t);
+            t += DATA_FETCH_INTERVAL_MILLIS;
             let new_order_book = MARKET
                 .get_custom_depth(env::var("SYMBOL").unwrap(), 1000)
                 .unwrap();
@@ -264,15 +265,8 @@ fn run_producer() {
                     );
                 };
             }
-            t = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis();
         } else {
-            let interval = DATA_FETCH_INTERVAL_MILLIS as i64 - delta as i64;
-            if interval > 0 {
-                thread::sleep(Duration::from_millis(interval.try_into().unwrap()));
-            }
+            thread::sleep(Duration::from_millis((t - current_t) as u64));
         }
     }
 }
