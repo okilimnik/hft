@@ -1,5 +1,6 @@
 use binance::api::Binance;
 use binance::config::Config;
+use binance::errors::ErrorKind;
 use binance::market::Market;
 use binance::model::OrderBook;
 use itertools::Itertools;
@@ -203,67 +204,74 @@ fn run_producer() {
             .unwrap()
             .as_millis();
         if current_t >= t {
-            //debug!("fetching data at {}", t);
             t += DATA_FETCH_INTERVAL_MILLIS;
-            let new_order_book = MARKET
-                .get_custom_depth(env::var("SYMBOL").unwrap(), 1000)
-                .unwrap();
+            match MARKET.get_custom_depth(env::var("SYMBOL").unwrap(), 1000) {
+                Ok(new_order_book) => {
+                    raw_series.push_back(new_order_book.clone());
+                    if raw_series.len() > ORDER_BOOK_QUEUE_SIZE {
+                        raw_series.pop_front();
+                    }
 
-            raw_series.push_back(new_order_book.clone());
-            if raw_series.len() > ORDER_BOOK_QUEUE_SIZE {
-                raw_series.pop_front();
-            }
+                    series_with_precision.push_back(OrderBookState::with_precision(
+                        new_order_book.last_update_id,
+                        new_order_book.bids,
+                        new_order_book.asks,
+                        PRICE_PRECISION,
+                        TRAINING_TRADE_AMOUNT,
+                    ));
+                    if series_with_precision.len() > ORDER_BOOK_QUEUE_SIZE {
+                        series_with_precision.pop_front();
+                    }
 
-            series_with_precision.push_back(OrderBookState::with_precision(
-                new_order_book.last_update_id,
-                new_order_book.bids,
-                new_order_book.asks,
-                PRICE_PRECISION,
-                TRAINING_TRADE_AMOUNT,
-            ));
-            if series_with_precision.len() > ORDER_BOOK_QUEUE_SIZE {
-                series_with_precision.pop_front();
-            }
-
-            if series_with_precision.len() == ORDER_BOOK_QUEUE_SIZE {
-                if env::var("TRADE_AMOUNT").is_ok() {
-                    let trade_series_with_precision: Vec<OrderBookState> = series_with_precision
-                        .iter()
-                        .rev()
-                        .take(HISTORY_SIZE)
-                        .rev()
-                        .cloned()
-                        .collect_vec();
-                    let raw_trade_series: Vec<OrderBook> = raw_series
-                        .iter()
-                        .rev()
-                        .take(HISTORY_SIZE)
-                        .rev()
-                        .cloned()
-                        .collect_vec();
-                    trade::trade(raw_trade_series, trade_series_with_precision);
-                };
-                if env::var("COLLECT").is_ok() {
-                    let input_series_with_precision = series_with_precision
-                        .iter()
-                        .take(HISTORY_SIZE)
-                        .cloned()
-                        .collect_vec();
-                    let raw_input_series =
-                        raw_series.iter().take(HISTORY_SIZE).cloned().collect_vec();
-                    let raw_label_series: Vec<OrderBook> = raw_series
-                        .iter()
-                        .rev()
-                        .take(PREDICTION_HEAD)
-                        .rev()
-                        .cloned()
-                        .collect_vec();
-                    create_input(
-                        input_series_with_precision,
-                        raw_input_series,
-                        raw_label_series,
-                    );
-                };
+                    if series_with_precision.len() == ORDER_BOOK_QUEUE_SIZE {
+                        if env::var("TRADE_AMOUNT").is_ok() {
+                            let trade_series_with_precision: Vec<OrderBookState> =
+                                series_with_precision
+                                    .iter()
+                                    .rev()
+                                    .take(HISTORY_SIZE)
+                                    .rev()
+                                    .cloned()
+                                    .collect_vec();
+                            let raw_trade_series: Vec<OrderBook> = raw_series
+                                .iter()
+                                .rev()
+                                .take(HISTORY_SIZE)
+                                .rev()
+                                .cloned()
+                                .collect_vec();
+                            trade::trade(raw_trade_series, trade_series_with_precision);
+                        };
+                        if env::var("COLLECT").is_ok() {
+                            let input_series_with_precision = series_with_precision
+                                .iter()
+                                .take(HISTORY_SIZE)
+                                .cloned()
+                                .collect_vec();
+                            let raw_input_series =
+                                raw_series.iter().take(HISTORY_SIZE).cloned().collect_vec();
+                            let raw_label_series: Vec<OrderBook> = raw_series
+                                .iter()
+                                .rev()
+                                .take(PREDICTION_HEAD)
+                                .rev()
+                                .cloned()
+                                .collect_vec();
+                            create_input(
+                                input_series_with_precision,
+                                raw_input_series,
+                                raw_label_series,
+                            );
+                        };
+                    }
+                }
+                Err(e) => match e.0 {
+                    ErrorKind::BinanceError(response) => match response.code {
+                        429_i16 => println!("Backing off"),
+                        _ => println!("Non-catched code {}: {}", response.code, response.msg),
+                    },
+                    _ => println!("Other errors: {}.", e.0),
+                },
             }
         } else {
             thread::sleep(Duration::from_millis((t - current_t) as u64));
