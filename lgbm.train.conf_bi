@@ -9,7 +9,7 @@ boosting_type = gbdt
 # binary , binary classification task
 # lambdarank , LambdaRank task
 # alias: application, app
-objective = multiclass
+objective = binary
 
 # eval metrics, support multi metric, delimited by ',' , support following metrics
 # l1 
@@ -18,10 +18,7 @@ objective = multiclass
 # auc 
 # binary_logloss , default metric for binary
 # binary_error
-metric = multi_logloss,auc_mu
-
-# number of class, for multiclass classification
-num_class = 2
+metric = binary_logloss,auc
 
 # frequency for metric output
 metric_freq = 1
@@ -79,8 +76,6 @@ bagging_fraction = 0.8
 # minimal number data for one leaf, use this to deal with over-fit
 # alias : min_data_per_leaf, min_data
 min_data_in_leaf = 20
-
-is_unbalance = true
 
 # minimal sum Hessians for one leaf, use this to deal with over-fit
 min_sum_hessian_in_leaf = 4.0

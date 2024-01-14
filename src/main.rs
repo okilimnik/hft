@@ -3,6 +3,8 @@ mod gcp;
 mod lightgbm;
 mod trade;
 mod ui;
+use std::fs::read_to_string;
+
 use clap::Parser;
 use dotenv::dotenv;
 
@@ -22,6 +24,10 @@ fn main() {
         Ok(command) => match command.task.as_str() {
             "split" => dataset::utils::split(),
             "train" => lightgbm::train(),
+            "predict" => {
+                let data = read_to_string("./lgbm.test").unwrap();
+                lightgbm::predict(data);
+            }
             _ => println!("Unknown task, exiting..."),
         },
         Err(_) => dataset::collect::from_binance_data(),
