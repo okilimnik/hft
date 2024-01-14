@@ -22,7 +22,7 @@ pub fn to_file(filepath: &str, data: String, append: bool) {
 }
 
 pub fn split() {
-    let mut data: Vec<String> = read_to_string("./svm_input.txt")
+    let mut data: Vec<String> = read_to_string("./input.txt")
         .unwrap() // panic on possible file-reading errors
         .lines() // split the string into an iterator of string slices
         .map(String::from) // make each slice into a string
@@ -39,13 +39,7 @@ pub fn split() {
         .rev()
         .take((count * 0.25) as usize)
         .map(|x| {
-            let mut label = x[0..2].to_string();
-            let mut data = x.to_owned();
-            if label == "-1" {
-                label = "0".to_string();
-                data = label + &x[2..x.len()];
-            };
-            to_file("./lgbm.test", data, true);
+            to_file("./lgbm.test", x.to_owned(), true);
         })
         .collect_vec();
 }
