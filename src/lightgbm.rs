@@ -14,7 +14,7 @@ pub fn train() {
     println!("{}", String::from_utf8_lossy(&output.stdout));
 }
 
-pub fn predict(data: String) -> f64 {
+pub fn predict(data: String) -> (f64, f64) {
     let _ = fs::remove_file("./lgbm.predict");
     let _ = fs::remove_file("./lgbm.prediction");
     to_file("./lgbm.predict", data, false);
@@ -24,10 +24,13 @@ pub fn predict(data: String) -> f64 {
         .expect("Failed to execute command");
     //println!("{}", String::from_utf8_lossy(&output.stdout));
 
-    // TODO: 2 results + don't use softmax
-    let string_result = read_to_string("./lgbm.prediction")
+    let prediction_str = read_to_string("./lgbm.prediction")
         .unwrap()
         .trim()
         .to_string();
-    string_result.parse().unwrap()
+    let mut predictions = prediction_str.split_whitespace();
+    (
+        predictions.next().unwrap().parse().unwrap(),
+        predictions.next().unwrap().parse().unwrap(),
+    )
 }

@@ -168,13 +168,13 @@ pub fn trade(raw_series: Vec<OrderBook>, series_with_precision: Vec<OrderBookSta
         let prediction_threshold: f64 = env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
 
         let svm_row = utils::to_svm(1, series_with_precision);
-        let prediction = lightgbm::predict(svm_row);
-        debug!("Prediction is {:.2}", prediction);
+        let (sell_prediction, buy_prediction) = lightgbm::predict(svm_row);
+        debug!("Prediction for sell is {:.2}", sell_prediction);
+        debug!("Prediction for buy is {:.2}", buy_prediction);
 
-        if prediction >= prediction_threshold {
+        if buy_prediction >= prediction_threshold {
             buy(raw_series.last().unwrap().clone());
-        }
-        if prediction <= 1f64 - prediction_threshold {
+        } else if sell_prediction >= prediction_threshold {
             sell(raw_series.last().unwrap().clone());
         }
         TRADING.store(false, Ordering::SeqCst);

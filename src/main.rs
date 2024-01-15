@@ -26,7 +26,7 @@ fn main() {
             "train" => lightgbm::train(),
             "predict" => {
                 let data = read_to_string("./lgbm.test").unwrap();
-                lightgbm::predict(data);
+                println!("prediction is {:?}", lightgbm::predict(data));
             }
             _ => println!("Unknown task, exiting..."),
         },
