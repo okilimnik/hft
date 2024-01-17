@@ -95,7 +95,7 @@ fn open_stop_profit_order(
     }
 }
 
-fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
+fn open_order(price: f64, stop_profit: f64, order_side: OrderSide, with_stop: bool) {
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let symbol: String = env::var("SYMBOL").unwrap();
     let stop_profit_side = if matches!(order_side, OrderSide::Buy) {
@@ -113,18 +113,22 @@ fn open_order(price: f64, stop_profit: f64, order_side: OrderSide) {
         TimeInForce::GTC,
         None,
     ) {
-        Ok(tx) => open_stop_profit_order(
-            tx.order_id,
-            &symbol,
-            trade_amount,
-            stop_profit,
-            stop_profit_side,
-        ),
+        Ok(tx) => {
+            if with_stop {
+                open_stop_profit_order(
+                    tx.order_id,
+                    &symbol,
+                    trade_amount,
+                    stop_profit,
+                    stop_profit_side,
+                )
+            }
+        }
         Err(e) => debug!("start trading error {:?}", e),
     };
 }
 
-fn buy(last_state: OrderBook) {
+fn buy(last_state: OrderBook, with_stop: bool) {
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let best_buy_price = last_state
         .asks
@@ -138,10 +142,10 @@ fn buy(last_state: OrderBook) {
     let profit_value: f64 = env::var("PROFIT").unwrap().parse().unwrap();
     let order_side = OrderSide::Buy;
     let stop_profit = best_buy_price + profit_value;
-    open_order(best_buy_price, stop_profit, order_side);
+    open_order(best_buy_price, stop_profit, order_side, with_stop);
 }
 
-fn sell(last_state: OrderBook) {
+fn sell(last_state: OrderBook, with_stop: bool) {
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let best_sell_price = last_state
         .bids
@@ -155,30 +159,50 @@ fn sell(last_state: OrderBook) {
     let profit_value: f64 = env::var("PROFIT").unwrap().parse().unwrap();
     let order_side = OrderSide::Sell;
     let stop_profit = best_sell_price - profit_value;
-    open_order(best_sell_price, stop_profit, order_side);
+    open_order(best_sell_price, stop_profit, order_side, with_stop);
 }
 
 pub fn trade(raw_series: Vec<OrderBook>, series_with_precision: Vec<OrderBookState>) {
     let symbol: String = env::var("SYMBOL").unwrap();
-    if TRADING.load(Ordering::SeqCst) || !ACCOUNT.get_open_orders(symbol).unwrap().is_empty() {
+    if TRADING.load(Ordering::SeqCst) {
         return;
     }
-    TRADING.store(true, Ordering::SeqCst);
-    thread::spawn(move || {
-        let prediction_threshold: f64 = env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
+    let opened_orders = ACCOUNT.get_open_orders(symbol).unwrap();
+    if opened_orders.is_empty() {
+        TRADING.store(true, Ordering::SeqCst);
+        thread::spawn(move || {
+            let prediction_threshold: f64 =
+                env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
 
-        let svm_row = utils::to_svm(1, series_with_precision);
-        let (sell_prediction, buy_prediction) = lightgbm::predict(svm_row);
-        debug!("Prediction for sell is {:.2}", sell_prediction);
-        debug!("Prediction for buy is {:.2}", buy_prediction);
+            let svm_row = utils::to_svm(1, series_with_precision);
+            let (sell_prediction, buy_prediction) = lightgbm::predict(svm_row);
+            debug!("Prediction for sell is {:.2}", sell_prediction);
+            debug!("Prediction for buy is {:.2}", buy_prediction);
 
-        if buy_prediction >= prediction_threshold {
-            buy(raw_series.last().unwrap().clone());
-        } else if sell_prediction >= prediction_threshold {
-            sell(raw_series.last().unwrap().clone());
+            if buy_prediction >= prediction_threshold {
+                buy(raw_series.last().unwrap().clone(), true);
+            } else if sell_prediction >= prediction_threshold {
+                sell(raw_series.last().unwrap().clone(), true);
+            }
+            TRADING.store(false, Ordering::SeqCst);
+        });
+    } else {
+        let order = opened_orders.first().unwrap();
+        let order_time = order.time as u128;
+        let current_t = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        if current_t - order_time > 20000 {
+            let symbol: String = env::var("SYMBOL").unwrap();
+            ACCOUNT.cancel_order(symbol, order.order_id).unwrap();
+            if &order.side == "BUY" {
+                buy(raw_series.last().unwrap().clone(), false);
+            } else {
+                sell(raw_series.last().unwrap().clone(), false);
+            }
         }
-        TRADING.store(false, Ordering::SeqCst);
-    });
+    }
 
     // ACCOUNT.cancel_all_open_orders("WTCETH")
     // account.order_status("WTCETH", order_id)

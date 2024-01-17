@@ -16,13 +16,33 @@ RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path r
 COPY . .
 RUN cargo build --release --target x86_64-unknown-linux-musl --bin neusa
 
-FROM alpine AS runtime
-RUN addgroup -S myuser && adduser -S myuser -G myuser
-RUN apk add --update openssl \
-    && apk --no-cache -U -a upgrade
+FROM rust:1-buster AS runtime
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/neusa /usr/local/bin/
 COPY . .
-#USER myuser
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cmake \
+        build-essential \
+        openssl \
+        gcc \
+        g++ \
+        curl \
+        git \
+        libomp-dev && \
+
+    # lightgbm
+    git clone --recursive --branch stable --depth 1 https://github.com/Microsoft/LightGBM && \
+    cd ./LightGBM && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make -j4 && \
+    make install && \
+    cd "${HOME}" && \
+    rm -rf LightGBM
+
 CMD RUST_LOG=debug /usr/local/bin/neusa
 
 # docker build -t neusa .
