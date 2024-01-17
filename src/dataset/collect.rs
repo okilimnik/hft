@@ -245,7 +245,7 @@ fn run_producer() {
                                 .take(HISTORY_SIZE)
                                 .collect_vec();
                             let raw_input_series =
-                                raw_series.iter().take(HISTORY_SIZE).cloned().collect_vec();
+                                raw_series.iter().take(HISTORY_SIZE).collect_vec();
                             let raw_label_series = raw_series
                                 .iter()
                                 .rev()
