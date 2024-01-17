@@ -48,7 +48,7 @@ fn get_price_by_index(j: usize, price_for_level_5: i64) -> i64 {
     price_for_level_5 + 10 * (j as i64 - 5)
 }
 
-pub fn to_svm(label: i64, data: Vec<OrderBookState>) -> String {
+pub fn to_svm(label: i64, data: Vec<&OrderBookState>) -> String {
     let price_that_matters = data
         .iter()
         .map(|state| {

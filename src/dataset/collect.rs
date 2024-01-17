@@ -36,7 +36,7 @@ lazy_static! {
     );
 }
 
-fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
+fn calc_label(input_series: &[&OrderBook], label_series: &[&OrderBook]) -> i64 {
     let profit_value = env::var("PROFIT").unwrap().parse().unwrap();
     let last_input = input_series.last().unwrap();
     let opening_order_series = label_series.iter().take(ORDER_FILL_TIME_SEC).collect_vec();
@@ -170,9 +170,9 @@ fn calc_label(input_series: &[OrderBook], label_series: &[OrderBook]) -> i64 {
 }
 
 fn create_input(
-    input_series_with_precision: Vec<OrderBookState>,
-    raw_input_series: Vec<OrderBook>,
-    raw_label_series: Vec<OrderBook>,
+    input_series_with_precision: Vec<&OrderBookState>,
+    raw_input_series: Vec<&OrderBook>,
+    raw_label_series: Vec<&OrderBook>,
 ) {
     let label = calc_label(&raw_input_series, &raw_label_series);
     // update UI
@@ -225,20 +225,17 @@ fn run_producer() {
 
                     if series_with_precision.len() == ORDER_BOOK_QUEUE_SIZE {
                         if env::var("TRADE_AMOUNT").is_ok() {
-                            let trade_series_with_precision: Vec<OrderBookState> =
-                                series_with_precision
-                                    .iter()
-                                    .rev()
-                                    .take(HISTORY_SIZE)
-                                    .rev()
-                                    .cloned()
-                                    .collect_vec();
-                            let raw_trade_series: Vec<OrderBook> = raw_series
+                            let trade_series_with_precision = series_with_precision
                                 .iter()
                                 .rev()
                                 .take(HISTORY_SIZE)
                                 .rev()
-                                .cloned()
+                                .collect_vec();
+                            let raw_trade_series = raw_series
+                                .iter()
+                                .rev()
+                                .take(HISTORY_SIZE)
+                                .rev()
                                 .collect_vec();
                             trade::trade(raw_trade_series, trade_series_with_precision);
                         };
@@ -246,16 +243,14 @@ fn run_producer() {
                             let input_series_with_precision = series_with_precision
                                 .iter()
                                 .take(HISTORY_SIZE)
-                                .cloned()
                                 .collect_vec();
                             let raw_input_series =
                                 raw_series.iter().take(HISTORY_SIZE).cloned().collect_vec();
-                            let raw_label_series: Vec<OrderBook> = raw_series
+                            let raw_label_series = raw_series
                                 .iter()
                                 .rev()
                                 .take(PREDICTION_HEAD)
                                 .rev()
-                                .cloned()
                                 .collect_vec();
                             create_input(
                                 input_series_with_precision,

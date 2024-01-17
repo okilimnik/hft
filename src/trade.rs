@@ -128,7 +128,7 @@ fn open_order(price: f64, stop_profit: f64, order_side: OrderSide, with_stop: bo
     };
 }
 
-fn buy(last_state: OrderBook, with_stop: bool) {
+fn buy(last_state: &OrderBook, with_stop: bool) {
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let best_buy_price = last_state
         .asks
@@ -145,7 +145,7 @@ fn buy(last_state: OrderBook, with_stop: bool) {
     open_order(best_buy_price, stop_profit, order_side, with_stop);
 }
 
-fn sell(last_state: OrderBook, with_stop: bool) {
+fn sell(last_state: &OrderBook, with_stop: bool) {
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let best_sell_price = last_state
         .bids
@@ -162,7 +162,7 @@ fn sell(last_state: OrderBook, with_stop: bool) {
     open_order(best_sell_price, stop_profit, order_side, with_stop);
 }
 
-pub fn trade(raw_series: Vec<OrderBook>, series_with_precision: Vec<OrderBookState>) {
+pub fn trade(raw_series: Vec<&OrderBook>, series_with_precision: Vec<&OrderBookState>) {
     let symbol: String = env::var("SYMBOL").unwrap();
     if TRADING.load(Ordering::SeqCst) {
         return;
@@ -180,9 +180,9 @@ pub fn trade(raw_series: Vec<OrderBook>, series_with_precision: Vec<OrderBookSta
             debug!("Prediction for buy is {:.2}", buy_prediction);
 
             if buy_prediction >= prediction_threshold {
-                buy(raw_series.last().unwrap().clone(), true);
+                buy(raw_series.last().unwrap(), true);
             } else if sell_prediction >= prediction_threshold {
-                sell(raw_series.last().unwrap().clone(), true);
+                sell(raw_series.last().unwrap(), true);
             }
             TRADING.store(false, Ordering::SeqCst);
         });
