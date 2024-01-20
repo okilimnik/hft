@@ -1,6 +1,6 @@
 # Using the `rust-musl-builder` as base image, instead of 
 # the official Rust toolchain
-FROM clux/muslrust:stable AS chef
+FROM clux/muslrust:1.75.0-stable AS chef
 USER root
 RUN cargo install cargo-chef
 WORKDIR /app
@@ -16,7 +16,7 @@ RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path r
 COPY . .
 RUN cargo build --release --target x86_64-unknown-linux-musl --bin neusa
 
-FROM alpine AS runtime
+FROM alpine:3.19.0 AS runtime
 #RUN addgroup -S myuser && adduser -S myuser -G myuser
 RUN apk add --update openssl \
     && apk --no-cache -U -a upgrade

@@ -1,6 +1,9 @@
 use std::{
     env,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -128,7 +131,7 @@ fn open_order(price: f64, stop_profit: f64, order_side: OrderSide, with_stop: bo
     };
 }
 
-fn buy(last_state: &OrderBook, with_stop: bool) {
+fn buy(last_state: OrderBook, with_stop: bool) {
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let best_buy_price = last_state
         .asks
@@ -145,7 +148,7 @@ fn buy(last_state: &OrderBook, with_stop: bool) {
     open_order(best_buy_price, stop_profit, order_side, with_stop);
 }
 
-fn sell(last_state: &OrderBook, with_stop: bool) {
+fn sell(last_state: OrderBook, with_stop: bool) {
     let trade_amount: f64 = env::var("TRADE_AMOUNT").unwrap().parse().unwrap();
     let best_sell_price = last_state
         .bids
@@ -168,21 +171,21 @@ pub fn trade(raw_series: Vec<&OrderBook>, series_with_precision: Vec<&OrderBookS
         return;
     }
     let opened_orders = ACCOUNT.get_open_orders(symbol).unwrap();
+    let last_item_ref = *raw_series.last().unwrap();
+    let last_item: OrderBook = last_item_ref.clone();
     if opened_orders.is_empty() {
         TRADING.store(true, Ordering::SeqCst);
+        let prediction_threshold: f64 = env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
+
+        let svm_row = utils::to_svm(1, series_with_precision);
+        let (sell_prediction, buy_prediction) = lightgbm::predict(svm_row);
+        debug!("Prediction for sell is {:.2}", sell_prediction);
+        debug!("Prediction for buy is {:.2}", buy_prediction);
         thread::spawn(move || {
-            let prediction_threshold: f64 =
-                env::var("PREDICTION_THRESHOLD").unwrap().parse().unwrap();
-
-            let svm_row = utils::to_svm(1, series_with_precision);
-            let (sell_prediction, buy_prediction) = lightgbm::predict(svm_row);
-            debug!("Prediction for sell is {:.2}", sell_prediction);
-            debug!("Prediction for buy is {:.2}", buy_prediction);
-
             if buy_prediction >= prediction_threshold {
-                buy(raw_series.last().unwrap(), true);
+                buy(last_item, true);
             } else if sell_prediction >= prediction_threshold {
-                sell(raw_series.last().unwrap(), true);
+                sell(last_item, true);
             }
             TRADING.store(false, Ordering::SeqCst);
         });
@@ -197,9 +200,9 @@ pub fn trade(raw_series: Vec<&OrderBook>, series_with_precision: Vec<&OrderBookS
             let symbol: String = env::var("SYMBOL").unwrap();
             ACCOUNT.cancel_order(symbol, order.order_id).unwrap();
             if &order.side == "BUY" {
-                buy(raw_series.last().unwrap().clone(), false);
+                buy(last_item, false);
             } else {
-                sell(raw_series.last().unwrap().clone(), false);
+                sell(last_item, false);
             }
         }
     }

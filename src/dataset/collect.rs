@@ -20,11 +20,11 @@ use crate::gcp;
 use crate::trade;
 use crate::ui;
 
-const HISTORY_SIZE: usize = 24;
-const PREDICTION_HEAD: usize = 8;
+const HISTORY_SIZE: usize = 20;
+const PREDICTION_HEAD: usize = 6;
 const ORDER_BOOK_QUEUE_SIZE: usize = HISTORY_SIZE + PREDICTION_HEAD;
-const ORDER_FILL_TIME_SEC: usize = 2;
-const DATA_FETCH_INTERVAL_MILLIS: u128 = 2500;
+const ORDER_FILL_TIME_MILLIS: u128 = 3000;
+const DATA_FETCH_INTERVAL_MILLIS: u128 = 3000;
 const PRICE_PRECISION: i64 = 10;
 const TRAINING_TRADE_AMOUNT: f64 = 0.1;
 
@@ -39,7 +39,10 @@ lazy_static! {
 fn calc_label(input_series: &[&OrderBook], label_series: &[&OrderBook]) -> i64 {
     let profit_value = env::var("PROFIT").unwrap().parse().unwrap();
     let last_input = input_series.last().unwrap();
-    let opening_order_series = label_series.iter().take(ORDER_FILL_TIME_SEC).collect_vec();
+    let opening_order_series = label_series
+        .iter()
+        .take((ORDER_FILL_TIME_MILLIS / DATA_FETCH_INTERVAL_MILLIS) as usize)
+        .collect_vec();
     let opening_order_interval_min_buy_price = opening_order_series
         .iter()
         .map(|x| {
@@ -100,7 +103,7 @@ fn calc_label(input_series: &[&OrderBook], label_series: &[&OrderBook]) -> i64 {
     }
     let future_best_buy_prices = label_series
         .iter()
-        .skip(ORDER_FILL_TIME_SEC)
+        .skip((ORDER_FILL_TIME_MILLIS / DATA_FETCH_INTERVAL_MILLIS) as usize)
         .map(|state| -> f64 {
             *state
                 .asks
@@ -115,7 +118,7 @@ fn calc_label(input_series: &[&OrderBook], label_series: &[&OrderBook]) -> i64 {
         .collect_vec();
     let future_best_sell_prices = label_series
         .iter()
-        .skip(ORDER_FILL_TIME_SEC)
+        .skip((ORDER_FILL_TIME_MILLIS / DATA_FETCH_INTERVAL_MILLIS) as usize)
         .map(|state| -> f64 {
             *state
                 .bids
