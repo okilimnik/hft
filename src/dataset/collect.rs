@@ -172,6 +172,12 @@ fn calc_label(input_series: &[&OrderBook], label_series: &[&OrderBook]) -> i64 {
     label
 }
 
+fn get_input_file_params() -> (String, String) {
+    let filename = "input.svm".to_string();
+    let filepath = format!("./{}", filename);
+    (filename, filepath)
+}
+
 fn create_input(
     input_series_with_precision: Vec<&OrderBookState>,
     raw_input_series: Vec<&OrderBook>,
@@ -188,13 +194,14 @@ fn create_input(
 
     // input
     let svm_row = utils::to_svm(label, input_series_with_precision);
-    let filename = "input.svm".to_string();
-    let filepath = format!("./{}", filename);
+    let (filename, filepath) = get_input_file_params();
     utils::to_file(&filepath, svm_row, true);
     gcp::create_file(filename, filepath);
 }
 
 fn run_producer() {
+    let (filename, filepath) = get_input_file_params();
+    gcp::download_file(filename, filepath);
     let mut series_with_precision = VecDeque::new();
     let mut raw_series = VecDeque::new();
     let mut t: u128 = SystemTime::now()

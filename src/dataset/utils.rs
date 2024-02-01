@@ -77,7 +77,10 @@ pub fn to_svm(label: i64, data: Vec<&OrderBookState>) -> String {
                         .entry(get_price_by_index(j, price_that_matters))
                         .or_insert(0f64);
                 if quantity >= QUANTITY_THRESHOLD {
-                    acc + " " + &((i * 10) + j + 1).to_string() + ":" + &format!("{:.4}", quantity)
+                    acc + " "
+                        + &((i * 10) + j + 1).to_string()
+                        + ":"
+                        + &format!("{}", quantity as i64 / 5)
                 } else {
                     acc
                 }

@@ -20,10 +20,6 @@ FROM alpine:3.19.0 AS runtime
 #RUN addgroup -S myuser && adduser -S myuser -G myuser
 RUN apk add --update openssl \
     && apk --no-cache -U -a upgrade
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/neusa /usr/local/bin/
-COPY . .
-#USER myuser
-
 RUN apk add git gcc g++ make cmake && \
     export CXX=g++ CC=gcc && \
     # lightgbm
@@ -36,6 +32,9 @@ RUN apk add git gcc g++ make cmake && \
     make install && \
     cd "${HOME}" && \
     rm -rf LightGBM
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/neusa /usr/local/bin/
+COPY . .
+#USER myuser
 
 CMD RUST_LOG=debug /usr/local/bin/neusa
 

@@ -1,0 +1,5 @@
+library(lightgbm)
+model <- lgb.load("./lgbm.model.txt")
+test <- lgb.Dataset("./lgbm.test")
+lgb.Dataset.construct(test)
+print(lgb.interprete(model, test$data, 1552L:1553L))
